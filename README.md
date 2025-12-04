@@ -340,6 +340,27 @@ CREATE POLICY "Users can insert their own data"
   WITH CHECK (auth.jwt()->>'sub' = user_id);
 ```
 
+### Swiss Ephemeris 데이터 경로
+
+- 엔진이 기본으로 `public/ephe`를 바라보며(`lib/bazi/engine.ts`의 `swe_set_ephe_path(process.cwd() + "/public/ephe")`), 현재 저장소에 `sepl_*.se1`, `semo_*.se1`, `seas_*.se1`, `sefstars.txt` 등 필수 ephe 파일이 포함되어 있습니다.
+- 만약 파일이 누락되었다면 Swiss Ephemeris 공식 배포본에서 `sepl_18.se1`, `semo_18.se1`, `seas_18.se1`, `sefstars.se1` 등을 내려받아 `public/ephe`에 그대로 복사하세요(하위 디렉터리 구조 유지).
+- 배포 시에도 `public/ephe` 전체를 함께 포함해 두 환경(Windows 개발, Linux 배포)에서 동일 경로로 접근하도록 합니다.
+
+### Bazi 엔진 환경 변수
+
+```env
+ENGINE_MODE=swiss            # swiss | date-chinese (fallback 엔진 선택)
+FALLBACK_STRATEGY=allowApprox # allowApprox | strict
+# 필요 시 커스텀 ephemeris 경로를 지정 (기본값은 빈 값이며, 코드에서 public/ephe 사용)
+EPHE_PATH=
+```
+
+설명:
+- `ENGINE_MODE=swiss`: swisseph-v2 → swisseph-wasm 순으로 시도 (네이티브 실패 시 wasm 자동 폴백).
+- `ENGINE_MODE=date-chinese`: Swiss 엔진을 건너뛰고 근사 엔진(date-chinese)만 사용.
+- `FALLBACK_STRATEGY=allowApprox`: Swiss 엔진 실패 시 date-chinese로 폴백, `strict`는 실패 시 500 반환.
+- `EPHE_PATH`: 기본값 빈 문자열. 커스텀 경로가 필요할 때만 설정하며, 미설정 시 `public/ephe`를 사용.
+
 ### 추가 로그인 방식 설정
 
 Clerk에서 추가 로그인 방식을 활성화하려면:

@@ -1,54 +1,105 @@
 import path from "path";
 
-type SwissEphCtor = typeof import("swisseph-wasm").default;
-type SwissEphInstance = InstanceType<SwissEphCtor>;
+type SwissWasmCtor = typeof import("swisseph-wasm").default;
+type SwissWasmInstance = InstanceType<SwissWasmCtor>;
 
-type SwissEphWithPath = SwissEphInstance & {
-  set_ephe_path: (ephePath: string) => string;
-  calc_ut: (julianDay: number, body: number, flags: number) => Float64Array;
+export type SwissEngineSource = "swisseph-wasm";
+
+export type SwissCalcResult = {
+  longitude: number;
+  latitude: number;
+  distance: number;
+  speedLongitude?: number;
+  speedLatitude?: number;
+  speedDistance?: number;
+};
+
+export type SwissEngine = {
+  source: SwissEngineSource;
+  swe_julday: (year: number, month: number, day: number, utHour: number) => number;
+  swe_calc_ut: (julianDay: number, body: number, flags: number) => SwissCalcResult;
+  swe_set_ephe_path: (ephePath: string) => unknown;
+  swe_time_equ?: (julianDay: number) => number | null;
+  constants: {
+    SE_SUN: number;
+    SEFLG_SWIEPH: number;
+    SE_GREG_CAL?: number;
+  };
+  cleanup?: () => Promise<void> | void;
 };
 
 const EPHE_PATH = path.join(process.cwd(), "public", "ephe");
+const NORMALIZED_EPHE_PATH = EPHE_PATH.replace(/\\/g, "/");
 
-let initPromise: Promise<SwissEphWithPath> | null = null;
-let ctorPromise: Promise<SwissEphCtor> | null = null;
+let enginePromise: Promise<SwissEngine> | null = null;
 
-const loadSwissEphCtor = async (): Promise<SwissEphCtor> => {
-  if (!ctorPromise) {
-    ctorPromise = import("swisseph-wasm").then((mod) => mod.default);
+const toWasmResult = (result: ArrayLike<number>): SwissCalcResult => {
+  const longitude = result[0] ?? 0;
+  const latitude = result[1] ?? 0;
+  const distance = result[2] ?? 0;
+
+  return {
+    longitude,
+    latitude,
+    distance,
+    speedLongitude: result[3],
+    speedLatitude: result[4],
+    speedDistance: result[5],
+  };
+};
+
+const loadWasmEngine = async (): Promise<SwissEngine> => {
+  const SwissEph: SwissWasmCtor = (await import("swisseph-wasm")).default;
+  const swe = new SwissEph() as SwissWasmInstance;
+
+  await swe.initSwissEph();
+  swe.set_ephe_path(NORMALIZED_EPHE_PATH);
+
+  return {
+    source: "swisseph-wasm",
+    swe_julday: (year, month, day, utHour) => swe.julday(year, month, day, utHour),
+    swe_calc_ut: (julianDay, body, flags) => toWasmResult(swe.calc_ut(julianDay, body, flags)),
+    swe_set_ephe_path: swe.set_ephe_path.bind(swe),
+    swe_time_equ: () => null, // wasm 빌드는 swe_time_equ 결과를 제공하지 않음
+    constants: {
+      SE_SUN: swe.SE_SUN,
+      SEFLG_SWIEPH: swe.SEFLG_SWIEPH,
+      SE_GREG_CAL: swe.SE_GREG_CAL,
+    },
+    cleanup: typeof swe.close === "function" ? () => swe.close() : undefined,
+  };
+};
+
+const loadEngine = async (): Promise<SwissEngine> => {
+  // 네이티브(swisseph-v2) 경로는 빌드 의존성을 피하기 위해 제거하고 WASM만 사용
+  return loadWasmEngine();
+};
+
+export const getSwissEngine = async (): Promise<SwissEngine> => {
+  if (!enginePromise) {
+    enginePromise = loadEngine();
   }
-  return ctorPromise;
+  return enginePromise;
 };
 
-const initSwissInstance = async (): Promise<SwissEphWithPath> => {
-  if (initPromise) {
-    return initPromise;
-  }
-
-  initPromise = (async () => {
-    const SwissEph = await loadSwissEphCtor();
-    const instance = new SwissEph() as SwissEphWithPath;
-    await instance.initSwissEph();
-    const normalizedEphePath = EPHE_PATH.replace(/\\/g, "/");
-    instance.set_ephe_path(normalizedEphePath);
-    return instance;
-  })();
-
-  return initPromise;
-};
-
-export const getSwissEph = async (): Promise<SwissEphWithPath> => {
-  return initSwissInstance();
-};
-
-export const testSwissConnection = async (): Promise<number> => {
-  const swe = await getSwissEph();
-  const julianDay = swe.julday(1990, 1, 1, 0);
-  const [sunLongitude] = swe.calc_ut(julianDay, swe.SE_SUN, swe.SEFLG_SWIEPH);
-  console.log(
-    `[swisseph] Sun longitude 1990-01-01 (UTC 00:00): ${sunLongitude.toFixed(
-      6,
-    )} deg`,
+export const testSwissConnection = async (): Promise<{
+  engine: SwissEngineSource;
+  ephePath: string;
+  julianDayUTC: number;
+  sunLongitude: number;
+}> => {
+  const engine = await getSwissEngine();
+  const julianDayUTC = engine.swe_julday(2024, 2, 4, 12);
+  const sunPosition = engine.swe_calc_ut(
+    julianDayUTC,
+    engine.constants.SE_SUN,
+    engine.constants.SEFLG_SWIEPH,
   );
-  return sunLongitude;
+
+  return {
+    engine: engine.source,
+    ephePath: NORMALIZED_EPHE_PATH,
+    julianDayUTC,
+    sunLongitude: sunPosition.longitude,
+  };
 };
