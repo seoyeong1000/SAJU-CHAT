@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { DateTime } from "luxon";
 import { z } from "zod";
 
+import { heavenlyStems, earthlyBranches } from "@/lib/bazi/constants";
 import { getSwissEngine } from "@/lib/bazi/engine";
 import { calculateEoT, calculateLongitudeOffset } from "@/lib/bazi/eot-approx";
 
@@ -22,11 +23,22 @@ const requestSchema = z.object({
 
 type BaziRequest = z.infer<typeof requestSchema>;
 
+type PillarElement = {
+  hanja: string;
+  hangul: string;
+  code: string;
+};
+
+type Pillar = {
+  stem: PillarElement | null;
+  branch: PillarElement | null;
+};
+
 type PillarResult = {
-  yearPillar: string | null;
-  monthPillar: string | null;
-  dayPillar: string | null;
-  hourPillar: string | null;
+  yearPillar: Pillar;
+  monthPillar: Pillar;
+  dayPillar: Pillar;
+  hourPillar: Pillar;
 };
 
 const toJulianDayUTC = (utc: DateTime): number => {
@@ -49,39 +61,40 @@ const toJulianDayUTC = (utc: DateTime): number => {
   return jdn + dayFraction;
 };
 
-const BRANCHES = [
-  "子",
-  "丑",
-  "寅",
-  "卯",
-  "辰",
-  "巳",
-  "午",
-  "未",
-  "申",
-  "酉",
-  "戌",
-  "亥",
-] as const;
+const BRANCHES = earthlyBranches.map((b) => b.hanja);
+const STEMS = heavenlyStems.map((s) => s.hanja);
 
-const computeMonthBranch = (sunLongitude: number): string => {
+const FIRST_MONTH_STEM_BY_YEAR_STEM = [2, 3, 4, 5, 6, 7, 8, 9, 0, 1]; // 甲/乙→丙/丁, 丙/丁→戊/己 ...
+
+const toCycleIndex = (value: number, modulo: number): number => ((value % modulo) + modulo) % modulo;
+
+const getStemByIndex = (idx: number): PillarElement => heavenlyStems[toCycleIndex(idx, heavenlyStems.length)];
+const getBranchByIndex = (idx: number): PillarElement =>
+  earthlyBranches[toCycleIndex(idx, earthlyBranches.length)];
+
+const computeMonthBranchIndex = (sunLongitude: number): number => {
   const normalized = ((sunLongitude - 315) % 360 + 360) % 360;
   const idx = Math.floor(normalized / 30);
-  return BRANCHES[(idx + 2) % 12]; // 315°→寅(2)
+  return toCycleIndex(idx + 2, 12); // 315°→寅(2)
 };
 
-const computeHourBranch = (date: DateTime, split: "traditional" | "modern"): string => {
+const computeHourBranchIndex = (date: DateTime, split: "traditional" | "modern"): number => {
   const minutes = date.hour * 60 + date.minute;
   const offsetFrom23 = minutes - 23 * 60;
   const idx = offsetFrom23 >= 0 ? Math.floor(offsetFrom23 / 120) : Math.floor((minutes + 60) / 120);
   const branchIndex = ((idx % 12) + 12) % 12;
 
   if (split === "modern" && branchIndex === 0 && date.hour >= 23) {
-    return BRANCHES[0];
+    return 0;
   }
 
-  return BRANCHES[branchIndex];
+  return branchIndex;
 };
+
+const BASE_DAY_JD = (() => {
+  const base = DateTime.fromISO("1984-02-02T00:00:00Z");
+  return toJulianDayUTC(base);
+})();
 
 const buildSuccessResponse = (
   input: BaziRequest,
@@ -192,14 +205,36 @@ export const POST = async (req: Request) => {
         ? local.plus({ minutes: totalOffsetMinutes })
         : local;
 
-    const monthBranch = computeMonthBranch(sun.longitude);
-    const hourBranch = computeHourBranch(tst, options.zishiSplit ?? "traditional");
+    // Branch indices
+    const monthBranchIndex = computeMonthBranchIndex(sun.longitude);
+    const hourBranchIndex = computeHourBranchIndex(tst, options.zishiSplit ?? "traditional");
+
+    // Year pillar: 입춘(태양황경 315°) 이전이면 이전 해 적용
+    const lichunPassed = sun.longitude >= 315;
+    const solarYear = lichunPassed ? local.year : local.year - 1;
+    const yearStemIndex = toCycleIndex(solarYear - 1984, STEMS.length);
+    const yearBranchIndex = toCycleIndex(solarYear - 1984, BRANCHES.length);
+
+    // Month pillar: 첫 달(寅)을 1월로 계산
+    const monthNumber = toCycleIndex(monthBranchIndex + 10, 12) + 1; // branchIndex 2(寅) -> 1
+    const firstMonthStemIndex = FIRST_MONTH_STEM_BY_YEAR_STEM[yearStemIndex];
+    const monthStemIndex = toCycleIndex(firstMonthStemIndex + (monthNumber - 1), STEMS.length);
+
+    // Day pillar: 1984-02-02 00:00 UTC = 甲子 기준
+    const dayNumber = Math.floor(julianDayUTC + 0.5);
+    const baseDayNumber = Math.floor(BASE_DAY_JD + 0.5);
+    const dayOffset = dayNumber - baseDayNumber;
+    const dayStemIndex = toCycleIndex(dayOffset, STEMS.length);
+    const dayBranchIndex = toCycleIndex(dayOffset, BRANCHES.length);
+
+    // Hour pillar: 일간 기반 공식
+    const hourStemIndex = toCycleIndex((dayStemIndex % 5) * 2 + hourBranchIndex, STEMS.length);
 
     const pillars: PillarResult = {
-      yearPillar: null,
-      monthPillar: monthBranch,
-      dayPillar: null,
-      hourPillar: hourBranch,
+      yearPillar: { stem: getStemByIndex(yearStemIndex), branch: getBranchByIndex(yearBranchIndex) },
+      monthPillar: { stem: getStemByIndex(monthStemIndex), branch: getBranchByIndex(monthBranchIndex) },
+      dayPillar: { stem: getStemByIndex(dayStemIndex), branch: getBranchByIndex(dayBranchIndex) },
+      hourPillar: { stem: getStemByIndex(hourStemIndex), branch: getBranchByIndex(hourBranchIndex) },
     };
 
     return buildSuccessResponse(
@@ -247,10 +282,10 @@ export const POST = async (req: Request) => {
 
     if ((options.fallbackStrategy ?? "allowApprox") === "allowApprox") {
       return NextResponse.json({
-        yearPillar: null,
-        monthPillar: null,
-        dayPillar: null,
-        hourPillar: null,
+        yearPillar: { stem: null, branch: null },
+        monthPillar: { stem: null, branch: null },
+        dayPillar: { stem: null, branch: null },
+        hourPillar: { stem: null, branch: null },
         raw: {
           julianDayUTC: null,
           sunLongitude: null,

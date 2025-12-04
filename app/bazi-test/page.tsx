@@ -40,11 +40,22 @@ type FormState = {
   fallbackStrategy: "allowApprox" | "strict";
 };
 
+type PillarElement = {
+  hanja: string | null;
+  hangul: string | null;
+  code: string | null;
+};
+
+type Pillar = {
+  stem: PillarElement | null;
+  branch: PillarElement | null;
+};
+
 type BaziResponse = {
-  hourPillar: string | null;
-  dayPillar: string | null;
-  monthPillar: string | null;
-  yearPillar: string | null;
+  hourPillar: Pillar;
+  dayPillar: Pillar;
+  monthPillar: Pillar;
+  yearPillar: Pillar;
   flags?: {
     usedTrueSolarTime: boolean;
     usedFallbackEngine: boolean;
@@ -485,10 +496,10 @@ const BaziTestPage = () => {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-4 gap-3 rounded-2xl bg-gradient-to-br from-violet-50 to-white p-4 text-center">
-                  <PillarBlock label="時柱" value={result?.hourPillar} />
-                  <PillarBlock label="日柱" value={result?.dayPillar} />
-                  <PillarBlock label="月柱" value={result?.monthPillar} />
-                  <PillarBlock label="年柱" value={result?.yearPillar} />
+                  <PillarBlock label="時柱" pillar={result?.hourPillar} />
+                  <PillarBlock label="日柱" pillar={result?.dayPillar} />
+                  <PillarBlock label="月柱" pillar={result?.monthPillar} />
+                  <PillarBlock label="年柱" pillar={result?.yearPillar} />
                 </div>
                 {result?.flags && (
                   <div className="flex flex-wrap gap-2">
@@ -624,11 +635,19 @@ const BaziTestPage = () => {
   );
 };
 
-const PillarBlock = ({ label, value }: { label: string; value?: string | null }) => (
-  <div className="rounded-xl bg-white/80 px-3 py-2 shadow-sm shadow-violet-50">
-    <div className="text-xs text-slate-400">{label}</div>
-    <div className="text-3xl font-bold text-slate-800">{value ?? "?"}</div>
-  </div>
-);
+const PillarBlock = ({ label, pillar }: { label: string; pillar?: Pillar | null }) => {
+  const stem = pillar?.stem;
+  const branch = pillar?.branch;
+  const hanja = [stem?.hanja, branch?.hanja].filter(Boolean).join("") || "?";
+  const hangul = [stem?.hangul, branch?.hangul].filter(Boolean).join("") || "";
+
+  return (
+    <div className="rounded-xl bg-white/80 px-3 py-2 shadow-sm shadow-violet-50">
+      <div className="text-xs text-slate-400">{label}</div>
+      <div className="text-3xl font-bold text-slate-800">{hanja}</div>
+      {hangul && <div className="text-sm text-slate-500">{hangul}</div>}
+    </div>
+  );
+};
 
 export default BaziTestPage;
