@@ -643,28 +643,39 @@ const BaziTestPage = () => {
   const hasResult = Boolean(result);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#f2f3ff] via-white to-[#fdf7ff]">
+    <div className="min-h-screen bg-slate-50 text-slate-900">
       <style jsx global>{`
-        @import url("https://fonts.googleapis.com/css2?family=Gowun+Dodum&display=swap");
+        @import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css");
         * {
-          font-family: "Gowun Dodum", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-          font-weight: 600;
+          font-family: "Pretendard Variable", "Pretendard", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         }
       `}</style>
 
-      <div className="mx-auto max-w-6xl px-4 py-12">
-        <div className="mx-auto mb-8 max-w-2xl text-center">
-          <p className="text-sm tracking-wide text-violet-500">ForceTeller Inspired</p>
-          <h1 className="mb-3 text-4xl font-bold text-slate-800">만세력 입력</h1>
-          <p className="text-slate-500">정확한 정보를 입력하고 세련된 사주 결과를 확인하세요.</p>
+      <header className="border-b border-slate-200 bg-gradient-to-br from-violet-50 via-white to-purple-50">
+        <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-8">
+          <p className="text-xs font-semibold uppercase tracking-[0.25em] text-violet-600">Bazi Intake</p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h1 className="text-3xl font-bold text-slate-900">만세력 입력</h1>
+              <p className="text-sm text-slate-600">
+                결과 화면과 동일한 톤으로 정보를 입력하고 바로 사주 풀이를 확인하세요.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Badge className="border border-violet-100 bg-white text-violet-700">UI 동기화</Badge>
+            </div>
+          </div>
         </div>
+      </header>
 
+      <main className="mx-auto max-w-5xl space-y-6 px-4 py-8">
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <Card className="border-0 bg-white/80 shadow-xl shadow-violet-100">
-            <CardHeader>
-              <CardTitle className="text-slate-800">프로필 입력</CardTitle>
+          <Card className="overflow-hidden border-2 border-violet-100 bg-white shadow-lg">
+            <CardHeader className="border-b border-violet-100 bg-gradient-to-r from-violet-50 to-purple-50">
+              <CardTitle className="text-slate-900">프로필 입력</CardTitle>
+              <p className="text-sm text-slate-600">결과 화면과 같은 톤으로 입력값을 정리했어요.</p>
             </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent className="space-y-6 bg-white">
               <div className="space-y-2">
                 <Label htmlFor="name" className="text-slate-700">
                   이름
@@ -852,11 +863,12 @@ const BaziTestPage = () => {
           </Card>
 
           <div className="flex flex-col gap-4">
-            <Card className="border-0 bg-white/80 shadow-xl shadow-violet-100">
-            <CardHeader>
-              <CardTitle className="text-slate-800">사주 결과</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
+            <Card className="overflow-hidden border-2 border-violet-100 bg-white shadow-lg">
+              <CardHeader className="border-b border-violet-100 bg-gradient-to-r from-violet-50 to-purple-50">
+                <CardTitle className="text-slate-900">사주 결과</CardTitle>
+                <p className="text-sm text-slate-600">입력 화면과 동일한 톤으로 미리 결과를 확인하세요.</p>
+              </CardHeader>
+              <CardContent className="space-y-6 bg-white">
               {!hasResult && (
                 <p className="text-sm text-slate-500">
                   정보를 입력하고 &ldquo;만세력 보러가기&rdquo;를 누르면 사주가 표시됩니다.
@@ -989,8 +1001,8 @@ const BaziTestPage = () => {
             </CardContent>
           </Card>
         </div>
-      </div>
-      </div>
+        </div>
+      </main>
 
       <Dialog open={showZishiGuide} onOpenChange={setShowZishiGuide}>
         <DialogContent className="max-w-md" aria-describedby="zishi-desc">
