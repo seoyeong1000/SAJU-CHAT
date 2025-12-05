@@ -20,6 +20,15 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { AlertCircle, Loader2, Search } from "lucide-react";
+import {
+  PolarAngleAxis,
+  PolarGrid,
+  PolarRadiusAxis,
+  Radar,
+  RadarChart,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+} from "recharts";
 
 type CalendarType = "solar" | "lunar" | "lunar-leap";
 
@@ -40,15 +49,54 @@ type FormState = {
   fallbackStrategy: "allowApprox" | "strict";
 };
 
+type FiveElement = "wood" | "fire" | "earth" | "metal" | "water";
+type Polarity = "yin" | "yang";
+type PillarKey = "hour" | "day" | "month" | "year";
+
 type PillarElement = {
   hanja: string | null;
   hangul: string | null;
   code: string | null;
 };
 
+type ChartElement = PillarElement & {
+  element?: FiveElement | null;
+  polarity?: Polarity | null;
+  tenGod?: string | null;
+  pronunciation?: string | null;
+};
+
 type Pillar = {
   stem: PillarElement | null;
   branch: PillarElement | null;
+};
+
+type ChartPillar = {
+  stem: ChartElement | null;
+  branch: ChartElement | null;
+};
+
+type RawChart = {
+  day_master?: ChartElement | null;
+  pillars?: Partial<Record<PillarKey, ChartPillar>>;
+  five_elements_count?: Partial<Record<FiveElement, number>>;
+};
+
+type UsefulGod = {
+  name: string;
+  element?: FiveElement | null;
+  description?: string | null;
+  score?: number | null;
+};
+
+type AnalysisResult = {
+  core?: {
+    strength_label?: string | null;
+    strength_score?: number | null;
+    strength_element?: FiveElement | null;
+    summary?: string | null;
+  };
+  useful_gods?: UsefulGod[];
 };
 
 type BaziResponse = {
@@ -65,6 +113,18 @@ type BaziResponse = {
   meta?: {
     note?: string;
   };
+  raw?: {
+    julianDayUTC: number | null;
+    sunLongitude: number | null;
+  };
+  raw_chart?: RawChart;
+  analysis_result?: AnalysisResult;
+};
+
+type NormalizedChart = {
+  dayStemCode: string | null;
+  dayMaster: ChartElement | null;
+  pillars: Record<PillarKey, ChartPillar>;
 };
 
 const presets: Record<"ipchun" | "seoul" | "busan" | "unknown", Partial<FormState>> = {
@@ -149,6 +209,283 @@ const cityOptions = [
   { label: "상하이, 중국", lat: "31.2304", lon: "121.4737", tzid: "Asia/Shanghai" },
   { label: "베이징, 중국", lat: "39.9042", lon: "116.4074", tzid: "Asia/Shanghai" },
 ];
+
+const ELEMENT_ORDER: FiveElement[] = ["wood", "fire", "earth", "metal", "water"];
+
+const ELEMENT_LABELS: Record<FiveElement, string> = {
+  wood: "목",
+  fire: "화",
+  earth: "토",
+  metal: "금",
+  water: "수",
+};
+
+const ELEMENT_STYLES: Record<
+  FiveElement,
+  { bg: string; text: string; ring: string; badge: string; subtle: string }
+> = {
+  wood: {
+    bg: "bg-green-50",
+    text: "text-green-900",
+    ring: "ring-green-200",
+    badge: "bg-green-100 text-green-800",
+    subtle: "text-green-600",
+  },
+  fire: {
+    bg: "bg-rose-50",
+    text: "text-rose-900",
+    ring: "ring-rose-200",
+    badge: "bg-rose-100 text-rose-800",
+    subtle: "text-rose-600",
+  },
+  earth: {
+    bg: "bg-amber-50",
+    text: "text-amber-900",
+    ring: "ring-amber-200",
+    badge: "bg-amber-100 text-amber-900",
+    subtle: "text-amber-600",
+  },
+  metal: {
+    bg: "bg-slate-100",
+    text: "text-slate-900",
+    ring: "ring-slate-300",
+    badge: "bg-slate-200 text-slate-800",
+    subtle: "text-slate-600",
+  },
+  water: {
+    bg: "bg-slate-900",
+    text: "text-sky-50",
+    ring: "ring-slate-700",
+    badge: "bg-slate-800 text-sky-100",
+    subtle: "text-sky-500",
+  },
+};
+
+const STEM_ELEMENT_MAP: Record<string, FiveElement> = {
+  jia: "wood",
+  yi: "wood",
+  bing: "fire",
+  ding: "fire",
+  wu: "earth",
+  ji: "earth",
+  geng: "metal",
+  xin: "metal",
+  ren: "water",
+  gui: "water",
+};
+
+const BRANCH_ELEMENT_MAP: Record<string, FiveElement> = {
+  zi: "water",
+  chou: "earth",
+  yin: "wood",
+  mao: "wood",
+  chen: "earth",
+  si: "fire",
+  wu: "fire",
+  wei: "earth",
+  shen: "metal",
+  you: "metal",
+  xu: "earth",
+  hai: "water",
+};
+
+const STEM_POLARITY_MAP: Record<string, Polarity> = {
+  jia: "yang",
+  yi: "yin",
+  bing: "yang",
+  ding: "yin",
+  wu: "yang",
+  ji: "yin",
+  geng: "yang",
+  xin: "yin",
+  ren: "yang",
+  gui: "yin",
+};
+
+const BRANCH_POLARITY_MAP: Record<string, Polarity> = {
+  zi: "yang",
+  chou: "yin",
+  yin: "yang",
+  mao: "yin",
+  chen: "yang",
+  si: "yin",
+  wu: "yang",
+  wei: "yin",
+  shen: "yang",
+  you: "yin",
+  xu: "yang",
+  hai: "yin",
+};
+
+const PRODUCT_MAP: Record<FiveElement, FiveElement> = {
+  wood: "fire",
+  fire: "earth",
+  earth: "metal",
+  metal: "water",
+  water: "wood",
+};
+
+const CONTROL_MAP: Record<FiveElement, FiveElement> = {
+  wood: "earth",
+  fire: "metal",
+  earth: "water",
+  metal: "wood",
+  water: "fire",
+};
+
+const PILLAR_LABELS: Record<PillarKey, string> = {
+  hour: "시주",
+  day: "일주",
+  month: "월주",
+  year: "연주",
+};
+
+const getElementByCode = (code?: string | null): FiveElement | null => {
+  if (!code) return null;
+  const normalized = code.toLowerCase();
+  return STEM_ELEMENT_MAP[normalized] ?? BRANCH_ELEMENT_MAP[normalized] ?? null;
+};
+
+const getPolarityByCode = (code?: string | null): Polarity | null => {
+  if (!code) return null;
+  const normalized = code.toLowerCase();
+  return STEM_POLARITY_MAP[normalized] ?? BRANCH_POLARITY_MAP[normalized] ?? null;
+};
+
+const getElementStyle = (element?: FiveElement | null) => ELEMENT_STYLES[element ?? "earth"];
+
+const getTenGod = (
+  dayStemCode: string | null,
+  target: { element?: FiveElement | null; polarity?: Polarity | null } | null,
+): string | null => {
+  if (!dayStemCode || !target?.element || !target.polarity) return null;
+
+  const dayElement = getElementByCode(dayStemCode);
+  const dayPolarity = getPolarityByCode(dayStemCode);
+  if (!dayElement || !dayPolarity) return null;
+
+  const targetElement = target.element;
+  const targetPolarity = target.polarity;
+
+  let relation: "peer" | "output" | "wealth" | "power" | "resource" | null = null;
+
+  if (targetElement === dayElement) {
+    relation = "peer";
+  } else if (PRODUCT_MAP[dayElement] === targetElement) {
+    relation = "output";
+  } else if (CONTROL_MAP[dayElement] === targetElement) {
+    relation = "wealth";
+  } else if (CONTROL_MAP[targetElement] === dayElement) {
+    relation = "power";
+  } else if (PRODUCT_MAP[targetElement] === dayElement) {
+    relation = "resource";
+  }
+
+  if (!relation) return null;
+
+  const samePolarity = targetPolarity === dayPolarity;
+  switch (relation) {
+    case "peer":
+      return samePolarity ? "비견" : "겁재";
+    case "output":
+      return samePolarity ? "식신" : "상관";
+    case "wealth":
+      return samePolarity ? "편재" : "정재";
+    case "power":
+      return samePolarity ? "편관" : "정관";
+    case "resource":
+      return samePolarity ? "편인" : "정인";
+    default:
+      return null;
+  }
+};
+
+const buildChartElement = (
+  rawElement?: PillarElement | ChartElement | null,
+  dayStemCode?: string | null,
+): ChartElement | null => {
+  if (!rawElement) return null;
+
+  const computedElement = (rawElement as ChartElement).element ?? getElementByCode(rawElement.code);
+  const polarity = (rawElement as ChartElement).polarity ?? getPolarityByCode(rawElement.code);
+  const pronunciation = (rawElement as ChartElement).pronunciation ?? rawElement.hangul ?? null;
+
+  return {
+    ...rawElement,
+    element: computedElement,
+    polarity,
+    pronunciation,
+    tenGod: (rawElement as ChartElement).tenGod ?? getTenGod(dayStemCode ?? null, { element: computedElement, polarity }),
+  };
+};
+
+const normalizeChart = (result: BaziResponse | null): NormalizedChart | null => {
+  if (!result) return null;
+
+  const rawPillars = (result.raw_chart?.pillars ?? {}) as Partial<Record<PillarKey, ChartPillar>>;
+  const basePillars: Record<PillarKey, Pillar | undefined> = {
+    hour: result.hourPillar,
+    day: result.dayPillar,
+    month: result.monthPillar,
+    year: result.yearPillar,
+  };
+
+  const dayStemCode = rawPillars.day?.stem?.code ?? basePillars.day?.stem?.code ?? null;
+
+  const build = (key: PillarKey): ChartPillar => {
+    const candidate = rawPillars[key] ?? basePillars[key];
+    return {
+      stem: buildChartElement(candidate?.stem as PillarElement | ChartElement | null, dayStemCode),
+      branch: buildChartElement(candidate?.branch as PillarElement | ChartElement | null, dayStemCode),
+    };
+  };
+
+  const dayMasterRaw = (result.raw_chart?.day_master as ChartElement | null) ?? (basePillars.day?.stem as ChartElement | null);
+
+  return {
+    dayStemCode,
+    dayMaster: buildChartElement(dayMasterRaw, dayStemCode),
+    pillars: {
+      hour: build("hour"),
+      day: build("day"),
+      month: build("month"),
+      year: build("year"),
+    },
+  };
+};
+
+const deriveElementCounts = (
+  result: BaziResponse | null,
+  normalized: NormalizedChart | null,
+): Record<FiveElement, number> => {
+  const counts = ELEMENT_ORDER.reduce(
+    (acc, cur) => {
+      acc[cur] = 0;
+      return acc;
+    },
+    {} as Record<FiveElement, number>,
+  );
+
+  const provided = result?.raw_chart?.five_elements_count;
+  if (provided) {
+    ELEMENT_ORDER.forEach((key) => {
+      const value = provided[key];
+      counts[key] = Number.isFinite(value) ? Number(value) : 0;
+    });
+  }
+
+  if (normalized) {
+    Object.values(normalized.pillars).forEach((pillar) => {
+      [pillar.stem, pillar.branch].forEach((char) => {
+        if (char?.element) {
+          counts[char.element] = (counts[char.element] ?? 0) + 1;
+        }
+      });
+    });
+  }
+
+  return counts;
+};
 
 const DEFAULT_FORM: FormState = {
   name: "",
@@ -279,6 +616,31 @@ const BaziTestPage = () => {
     setShowCityDropdown(false);
     setShowCityModal(false);
   };
+
+  const normalizedChart = useMemo(() => normalizeChart(result), [result]);
+  const fiveElementCounts = useMemo(
+    () => deriveElementCounts(result, normalizedChart),
+    [normalizedChart, result],
+  );
+  const fiveElementSeries = useMemo(
+    () =>
+      ELEMENT_ORDER.map((key) => ({
+        key,
+        label: `${ELEMENT_LABELS[key]} (${fiveElementCounts[key] ?? 0})`,
+        value: fiveElementCounts[key] ?? 0,
+      })),
+    [fiveElementCounts],
+  );
+  const dominantElement = useMemo(() => {
+    const entries = Object.entries(fiveElementCounts) as [FiveElement, number][];
+    return entries.length > 0
+      ? entries.reduce((prev, cur) => (cur[1] > prev[1] ? cur : prev), entries[0])[0]
+      : null;
+  }, [fiveElementCounts]);
+  const analysisCore = result?.analysis_result?.core;
+  const usefulGods = result?.analysis_result?.useful_gods ?? [];
+  const dayMaster = normalizedChart?.dayMaster;
+  const hasResult = Boolean(result);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#f2f3ff] via-white to-[#fdf7ff]">
@@ -491,48 +853,143 @@ const BaziTestPage = () => {
 
           <div className="flex flex-col gap-4">
             <Card className="border-0 bg-white/80 shadow-xl shadow-violet-100">
-              <CardHeader>
-                <CardTitle className="text-slate-800">사주 결과</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-4 gap-3 rounded-2xl bg-gradient-to-br from-violet-50 to-white p-4 text-center">
-                  <PillarBlock label="時柱" pillar={result?.hourPillar} />
-                  <PillarBlock label="日柱" pillar={result?.dayPillar} />
-                  <PillarBlock label="月柱" pillar={result?.monthPillar} />
-                  <PillarBlock label="年柱" pillar={result?.yearPillar} />
-                </div>
-                {result?.flags && (
-                  <div className="flex flex-wrap gap-2">
-                    {result.flags.usedTrueSolarTime && (
-                      <Badge className="bg-violet-100 text-violet-800">진태양시 적용</Badge>
-                    )}
-                    {result.flags.usedFallbackEngine && (
-                      <Badge className="bg-amber-100 text-amber-800">근사 엔진 사용</Badge>
-                    )}
-                    {result.flags.hourUnknown && (
-                      <Badge variant="outline" className="border-slate-300 text-slate-600">
-                        생시 미상
+            <CardHeader>
+              <CardTitle className="text-slate-800">사주 결과</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {!hasResult && (
+                <p className="text-sm text-slate-500">
+                  정보를 입력하고 &ldquo;만세력 보러가기&rdquo;를 누르면 사주가 표시됩니다.
+                </p>
+              )}
+
+              {hasResult && (
+                <div className="space-y-6">
+                  <div className="rounded-3xl bg-gradient-to-r from-violet-700 via-violet-600 to-indigo-600 p-5 text-white shadow-xl shadow-violet-200/60">
+                    <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.25em] text-violet-200">
+                          Premium Report
+                        </p>
+                        <h3 className="text-2xl font-bold leading-tight">포스텔러 스타일 리포트</h3>
+                        <p className="text-sm text-violet-100">
+                          입력한 생년월일·시간 기준으로 오행 균형과 신강약을 요약했어요.
+                        </p>
+                      </div>
+                      <div className="flex flex-col items-start gap-2 md:items-end">
+                        <Badge className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs text-white backdrop-blur">
+                          일간 {dayMaster?.hanja ?? "미정"}
+                        </Badge>
+                        {analysisCore?.strength_label && (
+                          <Badge className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs text-white backdrop-blur">
+                            신강약 {analysisCore.strength_label}
+                          </Badge>
+                        )}
+                        {dominantElement && (
+                          <Badge className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs text-white backdrop-blur">
+                            중심 오행 {ELEMENT_LABELS[dominantElement]}
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2 text-[11px] text-violet-100">
+                      <Badge className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-white">
+                        생년월일 {form.birthDate || "미상"}
                       </Badge>
-                    )}
-                    {result.flags.locationUnknown && (
-                      <Badge variant="outline" className="border-slate-300 text-slate-600">
-                        장소 미상
+                      <Badge className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-white">
+                        출생시각 {form.timeUnknown ? "미상" : form.birthTime || "00:00"}
                       </Badge>
-                    )}
+                      <Badge className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-white">
+                        달력 {form.calendarType === "solar" ? "양력" : form.calendarType === "lunar" ? "음력" : "음력(윤달)"}
+                      </Badge>
+                      <Badge className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] text-white">
+                        타임존 {form.tzid}
+                      </Badge>
+                    </div>
                   </div>
-                )}
-                {result?.meta?.note && (
-                  <p className="rounded-xl bg-violet-50 p-3 text-sm text-violet-800">{result.meta.note}</p>
-                )}
-                {!result && (
-                  <p className="text-sm text-slate-500">
-                    정보를 입력하고 &ldquo;만세력 보러가기&rdquo;를 누르면 사주가 표시됩니다.
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          </div>
+
+                  <div className="rounded-2xl bg-gradient-to-br from-violet-50 via-white to-white/60 p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-500">네 기둥</p>
+                        <p className="text-sm text-slate-600">천간/지지를 오행 컬러로 한눈에 확인하세요.</p>
+                      </div>
+                      {dayMaster?.hanja && (
+                        <Badge className="rounded-full bg-violet-600 px-3 py-1 text-xs text-white shadow-sm shadow-violet-200">
+                          일간 {dayMaster.hanja}
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="mb-3 grid grid-cols-2 gap-2 md:grid-cols-5">
+                      {ELEMENT_ORDER.map((el) => {
+                        const style = getElementStyle(el);
+                        const count = fiveElementCounts[el] ?? 0;
+                        return (
+                          <div
+                            key={el}
+                            className={cn(
+                              "flex items-center justify-between rounded-xl border px-3 py-2 text-xs font-semibold shadow-sm",
+                              style.bg,
+                              style.text,
+                              style.ring,
+                            )}
+                          >
+                            <span>{ELEMENT_LABELS[el]}</span>
+                            <span className="text-sm">{count}개</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      {(["hour", "day", "month", "year"] as PillarKey[]).map((key) => (
+                        <PillarCard
+                          key={key}
+                          label={PILLAR_LABELS[key]}
+                          pillar={normalizedChart?.pillars[key]}
+                          dayMaster={dayMaster}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  <FiveElementsChart data={fiveElementSeries} highlight={dayMaster?.element ?? null} />
+
+                  <StrengthDashboard
+                    core={analysisCore}
+                    usefulGods={usefulGods}
+                    dayMaster={dayMaster}
+                    fiveElementCounts={fiveElementCounts}
+                  />
+
+                  {result?.flags && (
+                    <div className="flex flex-wrap gap-2">
+                      {result.flags.usedTrueSolarTime && (
+                        <Badge className="bg-violet-100 text-violet-800">진태양시 적용</Badge>
+                      )}
+                      {result.flags.usedFallbackEngine && (
+                        <Badge className="bg-amber-100 text-amber-800">근사 엔진 사용</Badge>
+                      )}
+                      {result.flags.hourUnknown && (
+                        <Badge variant="outline" className="border-slate-300 text-slate-600">
+                          생시 미상
+                        </Badge>
+                      )}
+                      {result.flags.locationUnknown && (
+                        <Badge variant="outline" className="border-slate-300 text-slate-600">
+                          장소 미상
+                        </Badge>
+                      )}
+                    </div>
+                  )}
+                  {result?.meta?.note && (
+                    <p className="rounded-xl bg-violet-50 p-3 text-sm text-violet-800">{result.meta.note}</p>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
+      </div>
       </div>
 
       <Dialog open={showZishiGuide} onOpenChange={setShowZishiGuide}>
@@ -635,17 +1092,245 @@ const BaziTestPage = () => {
   );
 };
 
-const PillarBlock = ({ label, pillar }: { label: string; pillar?: Pillar | null }) => {
+const PillarCard = ({
+  label,
+  pillar,
+  dayMaster,
+}: {
+  label: string;
+  pillar?: ChartPillar | null;
+  dayMaster?: ChartElement | null;
+}) => {
   const stem = pillar?.stem;
   const branch = pillar?.branch;
-  const hanja = [stem?.hanja, branch?.hanja].filter(Boolean).join("") || "?";
-  const hangul = [stem?.hangul, branch?.hangul].filter(Boolean).join("") || "";
+  const isDayPillar = label.includes("일");
 
   return (
-    <div className="rounded-xl bg-white/80 px-3 py-2 shadow-sm shadow-violet-50">
-      <div className="text-xs text-slate-400">{label}</div>
-      <div className="text-3xl font-bold text-slate-800">{hanja}</div>
-      {hangul && <div className="text-sm text-slate-500">{hangul}</div>}
+    <div className="flex flex-col gap-2 rounded-2xl border border-violet-100 bg-white/90 p-3 shadow-sm shadow-violet-50">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-slate-500">{label}</span>
+        {isDayPillar && dayMaster?.hanja && (
+          <Badge className="rounded-full bg-violet-600 px-2 py-1 text-[11px] text-white shadow-sm shadow-violet-200">
+            일간 {dayMaster.hanja}
+          </Badge>
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <PillarCharacter character={stem} subtitle="천간" />
+        <PillarCharacter character={branch} subtitle="지지" />
+      </div>
+    </div>
+  );
+};
+
+const PillarCharacter = ({
+  character,
+  subtitle,
+}: {
+  character: ChartElement | null | undefined;
+  subtitle: string;
+}) => {
+  if (!character) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-3 text-slate-400">
+        <span className="text-2xl">?</span>
+        <span className="text-[11px]">{subtitle}</span>
+      </div>
+    );
+  }
+
+  const style = getElementStyle(character.element);
+
+  return (
+    <div
+      className={cn(
+        "relative overflow-hidden rounded-xl border bg-white/70 p-3 text-center ring-2",
+        style.bg,
+        style.ring,
+      )}
+    >
+      <Badge
+        className={cn(
+          "absolute left-1/2 top-2 -translate-x-1/2 rounded-full px-2 py-0.5 text-[10px] font-semibold shadow-sm",
+          style.badge,
+        )}
+      >
+        {character.tenGod ?? "십신 분석"}
+      </Badge>
+      <div className="pt-6">
+        <div className={cn("text-4xl font-bold leading-tight", style.text)}>
+          {character.hanja ?? "?"}
+        </div>
+        <div className="text-xs text-slate-500">
+          {character.pronunciation ?? character.hangul ?? character.code ?? ""}
+        </div>
+        <p className={cn("mt-1 text-[11px] font-semibold uppercase tracking-wide", style.subtle)}>
+          {subtitle}
+        </p>
+      </div>
+    </div>
+  );
+};
+
+const FiveElementsChart = ({
+  data,
+  highlight,
+}: {
+  data: { key: FiveElement; label: string; value: number }[];
+  highlight: FiveElement | null;
+}) => {
+  const maxValue = Math.max(...data.map((d) => d.value ?? 0), 1);
+
+  return (
+    <div className="overflow-hidden rounded-2xl border border-violet-100 bg-white/80 p-4 shadow-sm shadow-violet-50">
+      <div className="mb-4 flex items-center justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-500">오행 분포</p>
+          <p className="text-sm text-slate-600">목·화·토·금·수의 균형을 Radar 차트로 시각화합니다.</p>
+        </div>
+        {highlight && (
+          <Badge className={cn("rounded-full px-3", getElementStyle(highlight).badge)}>
+            일간 오행: {ELEMENT_LABELS[highlight]}
+          </Badge>
+        )}
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="h-64 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <RadarChart data={data}>
+              <defs>
+                <linearGradient id="five-elements" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stopColor="#a78bfa" stopOpacity={0.9} />
+                  <stop offset="100%" stopColor="#6366f1" stopOpacity={0.7} />
+                </linearGradient>
+              </defs>
+              <PolarGrid stroke="#e5e7eb" />
+              <PolarAngleAxis dataKey="label" tick={{ fill: "#475569", fontSize: 11 }} />
+              <PolarRadiusAxis angle={90} tick={{ fill: "#cbd5e1" }} domain={[0, Math.max(maxValue, 1)]} />
+              <Radar dataKey="value" stroke="#7c3aed" fill="url(#five-elements)" fillOpacity={0.75} />
+              <RechartsTooltip
+                formatter={(value: number, _name, props) => [`${value}개`, props.payload?.label ?? ""]}
+                contentStyle={{ borderRadius: 12, borderColor: "#e2e8f0" }}
+              />
+            </RadarChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="space-y-3">
+          {data.map((item) => {
+            const style = getElementStyle(item.key);
+            const percent = Math.round((item.value / Math.max(maxValue, 1)) * 100);
+            return (
+              <div
+                key={item.key}
+                className="flex items-center gap-3 rounded-xl border border-slate-100 bg-white/80 p-3 shadow-sm"
+              >
+                <div
+                  className={cn(
+                    "flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold",
+                    style.bg,
+                    style.text,
+                  )}
+                >
+                  {ELEMENT_LABELS[item.key]}
+                </div>
+                <div className="flex-1">
+                  <div className="flex items-center justify-between text-xs text-slate-500">
+                    <span>
+                      {ELEMENT_LABELS[item.key]} · {item.value}개
+                    </span>
+                    <span className={cn("font-semibold", style.subtle)}>{percent}%</span>
+                  </div>
+                  <div className="mt-1 h-2 rounded-full bg-slate-100">
+                    <div
+                      className={cn("h-2 rounded-full", style.bg)}
+                      style={{ width: `${Math.min(100, (item.value / Math.max(maxValue, 1)) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const StrengthDashboard = ({
+  core,
+  usefulGods,
+  dayMaster,
+  fiveElementCounts,
+}: {
+  core?: AnalysisResult["core"];
+  usefulGods: UsefulGod[];
+  dayMaster?: ChartElement | null;
+  fiveElementCounts: Record<FiveElement, number>;
+}) => {
+  const highlightElement = core?.strength_element ?? dayMaster?.element ?? null;
+  const coreLabel = core?.strength_label ?? "신강약 분석 대기";
+  const scoreText =
+    core?.strength_score !== undefined && core?.strength_score !== null
+      ? `점수: ${core.strength_score}`
+      : null;
+  const summary =
+    core?.summary ??
+    (dayMaster?.hanja
+      ? `당신의 일간은 ${dayMaster.hanja}(${dayMaster.pronunciation ?? ""}) 입니다.`
+      : "룰엔진 결과가 도착하면 신강/신약 요약이 표시됩니다.");
+
+  return (
+    <div className="grid gap-4 md:grid-cols-3">
+      <div className="rounded-2xl bg-gradient-to-br from-violet-600 to-indigo-600 p-5 text-white shadow-md md:col-span-1">
+        <p className="text-sm font-semibold text-violet-100">신강약</p>
+        <p className="text-2xl font-bold leading-tight">{coreLabel}</p>
+        {scoreText && <p className="text-sm text-violet-100">{scoreText}</p>}
+        <p className="mt-3 text-sm text-violet-50">{summary}</p>
+      </div>
+      <div className="space-y-3 rounded-2xl border border-slate-100 bg-white/80 p-4 shadow-sm md:col-span-2">
+        <div className="flex items-center justify-between">
+          <p className="text-sm font-semibold text-slate-800">용신 / 균형 카드</p>
+          {highlightElement && (
+            <Badge className={cn("rounded-full px-3 text-xs", getElementStyle(highlightElement).badge)}>
+              포인트 오행: {ELEMENT_LABELS[highlightElement]}
+            </Badge>
+          )}
+        </div>
+        {usefulGods.length === 0 ? (
+          <p className="text-sm text-slate-500">룰엔진 결과가 들어오면 용신/희신이 카드로 표시됩니다.</p>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {usefulGods.map((god) => {
+              const style = getElementStyle(god.element);
+              return (
+                <div
+                  key={`${god.name}-${god.element ?? "unknown"}`}
+                  className="flex flex-col gap-1 rounded-xl border border-slate-100 bg-white/80 p-3 shadow-sm"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="text-base font-semibold text-slate-800">{god.name}</div>
+                    {god.element && (
+                      <Badge className={cn("rounded-full px-2 text-[11px]", style.badge)}>
+                        {ELEMENT_LABELS[god.element]}
+                      </Badge>
+                    )}
+                  </div>
+                  {god.score !== undefined && god.score !== null && (
+                    <p className="text-xs text-slate-500">점수: {god.score}</p>
+                  )}
+                  <p className="text-sm text-slate-600">
+                    {god.description ?? "오행 균형을 돕는 보조 기운입니다."}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="rounded-xl border border-slate-100 bg-slate-50/60 p-3 text-xs text-slate-600">
+          오행 분포 ·{" "}
+          {ELEMENT_ORDER.map((el) => `${ELEMENT_LABELS[el]} ${fiveElementCounts[el] ?? 0}`).join(" / ")}
+        </div>
+      </div>
     </div>
   );
 };
