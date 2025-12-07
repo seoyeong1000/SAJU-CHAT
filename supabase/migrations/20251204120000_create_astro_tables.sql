@@ -1,17 +1,19 @@
 -- Astro request/result/error logging tables for Bazi engine
 -- Dev 환경: RLS 비활성화 (prod 전환 시 별도 마이그레이션에서 RLS 활성화 및 owner_id 추가)
 
--- uuid helper
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- Dev cleanup: ensure schema matches by recreating tables (safe for dev/stage)
+DROP TABLE IF EXISTS public.astro_error_log CASCADE;
+DROP TABLE IF EXISTS public.astro_result CASCADE;
+DROP TABLE IF EXISTS public.astro_request CASCADE;
 
 CREATE TABLE IF NOT EXISTS public.astro_request (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   input_json JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS public.astro_result (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   request_id UUID NOT NULL REFERENCES public.astro_request(id) ON DELETE CASCADE,
   output_json JSONB NOT NULL,
   engine_type TEXT NOT NULL CHECK (engine_type IN ('swiss-v2', 'swisseph-wasm', 'date-chinese')),
@@ -19,7 +21,7 @@ CREATE TABLE IF NOT EXISTS public.astro_result (
 );
 
 CREATE TABLE IF NOT EXISTS public.astro_error_log (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   request_id UUID REFERENCES public.astro_request(id) ON DELETE SET NULL,
   error_message TEXT NOT NULL,
   stack TEXT,

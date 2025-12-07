@@ -1,8 +1,7 @@
--- Stores saved Bazi/Saju results per Clerk user
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 CREATE TABLE IF NOT EXISTS public.bazi_saved_results (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   clerk_id TEXT NOT NULL,
   source_action TEXT NOT NULL CHECK (source_action IN ('save', 'consult')),
   payload JSONB NOT NULL,
