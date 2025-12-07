@@ -1,0 +1,48 @@
+[
+    {
+      "id": "VIBE_WOOD_EXCESS_HOOK_DOHWA_KO_V1",
+      "logic_key": "elem.strength.wood.excess",
+      "context_key": null,
+      "domain": "general",
+      "subdomain": "character",
+      "layer": "trend",
+      "persona_id": "trend_dohwador",
+      "use_case": "hook",
+      "is_active": true,
+      "version": 1,
+      "lang": "ko",
+      "text": "고집 좀 그만 부려! 대나무도 바람 불면 휘어진다니까?",
+      "source_ref": "숏사주"
+    },
+    {
+      "id": "VIBE_PEACH_BLOSSOM_HOOK_DOHWA_KO_V1",
+      "logic_key": "star.charm.peach_blossom",
+      "context_key": null,
+      "domain": "love",
+      "subdomain": "style",
+      "layer": "trend",
+      "persona_id": "trend_dohwador",
+      "use_case": "hook",
+      "is_active": true,
+      "version": 1,
+      "lang": "ko",
+      "text": "오늘따라 거울 속 내가 예뻐 보이나? 도화살 터지는 날, 집에만 있지 말고 나가봐!",
+      "source_ref": "숏사주"
+    },
+    {
+      "id": "VIBE_CHAT_GREETING_SISTER_KO_V1",
+      "logic_key": null,
+      "context_key": "chat.flow.greeting",
+      "domain": "general",
+      "subdomain": null,
+      "layer": "vibe",
+      "persona_id": "warm_sister",
+      "use_case": "greeting",
+      "is_active": true,
+      "version": 1,
+      "lang": "ko",
+      "text": "왔어? 오늘 표정이 왜 그래? 무슨 일 있었어? 언니한테 다 털어놔 봐.",
+      "source_ref": "도화도르_Vlog"
+    }
+  ]
+  

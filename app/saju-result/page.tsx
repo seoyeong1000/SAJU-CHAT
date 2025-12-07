@@ -1,5 +1,8 @@
-
 "use client";
+
+import { useAuth, useClerk } from "@clerk/nextjs";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +14,10 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Separator } from "@/components/ui/separator";
+import { useClerkSupabaseClient } from "@/lib/supabase/clerk-client";
+import { GUEST_SAJU_STORAGE_KEY, PENDING_ACTION_STORAGE_KEY } from "@/lib/storage-keys";
 import { cn } from "@/lib/utils";
+import { FiveElement, PillarInfo, PillarKey, SajuResultPayload } from "@/types/saju";
 import {
   BarChart3,
   BookOpen,
@@ -22,56 +28,12 @@ import {
   Compass,
   DollarSign,
   Info,
-  MessageCircle,
   Palette,
   Printer,
   Share2,
   TrendingUp,
   Users,
 } from "lucide-react";
-import { useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
-
-type FiveElement = "wood" | "fire" | "earth" | "metal" | "water";
-type PillarKey = "hour" | "day" | "month" | "year";
-
-type PillarInfo = {
-  stem: string;
-  branch: string;
-  element: FiveElement;
-  branchElement?: FiveElement;
-  tenGod?: string;
-  tenGodBranch?: string;
-  hiddenStem?: string;
-  twelveSpirit?: string;
-  twelveKiller?: string;
-  auspicious?: string;
-  inauspicious?: string;
-  label?: string;
-};
-
-type SajuResult = {
-  name: string;
-  birthDate: string;
-  birthTime: string;
-  gender: "male" | "female";
-  zodiacText?: string;
-  pillars: Record<PillarKey, PillarInfo>;
-  sipseong?: Partial<Record<PillarKey, string>>;
-  woonsung?: Partial<Record<PillarKey, string>>;
-  inmyeonggang: number;
-  ohangScores: Record<FiveElement, number>;
-  balance: {
-    geumun: number;
-    seongsaundong: number;
-  };
-  analysis?: {
-    strengthIndex?: number; // 0~100
-    strengthLabel?: string;
-    fiveElementDetail?: Partial<Record<FiveElement, number>>;
-    tenGodSummary?: string;
-  };
-};
 
 const ELEMENT_LABEL: Record<FiveElement, string> = {
   wood: "목",
@@ -149,7 +111,7 @@ const ELEMENT_COLORS: Record<
     ring: "ring-blue-200",
   },
 };
-const MOCK_RESULT: SajuResult = {
+const MOCK_RESULT: SajuResultPayload = {
   name: "서영",
   birthDate: "1988-08-28",
   birthTime: "08:00",
@@ -240,11 +202,13 @@ const MOCK_RESULT: SajuResult = {
 
 const clamp = (value: number, min = 0, max = 100) => Math.min(Math.max(value, min), max);
 
-const parseResultFromSearch = (raw?: string | null): SajuResult | null => {
+type CtaAction = "save" | "consult";
+
+const parseResultFromSearch = (raw?: string | null): SajuResultPayload | null => {
   if (!raw) return null;
   try {
     const decoded = decodeURIComponent(raw);
-    return JSON.parse(decoded) as SajuResult;
+    return JSON.parse(decoded) as SajuResultPayload;
   } catch {
     return null;
   }
@@ -302,10 +266,120 @@ const DonutChart = ({
 };
 const SajuResultPage = () => {
   const searchParams = useSearchParams();
-  const data = parseResultFromSearch(searchParams.get("data")) ?? MOCK_RESULT;
-  const { name, birthDate, birthTime, zodiacText, pillars, ohangScores } = data;
+  const dataParam = searchParams.get("data");
+  const supabase = useClerkSupabaseClient();
+  const { isLoaded, isSignedIn, userId } = useAuth();
+  const { openSignIn } = useClerk();
+
+  const [resultData, setResultData] = useState<SajuResultPayload | null>(
+    () => parseResultFromSearch(dataParam) ?? null,
+  );
+  const [ctaStatus, setCtaStatus] = useState<"idle" | "pending" | "success" | "error">("idle");
+  const [ctaMessage, setCtaMessage] = useState<string | null>(null);
   const [showLongFortune, setShowLongFortune] = useState(false);
   const [showGlossary, setShowGlossary] = useState(false);
+
+  const data = resultData ?? MOCK_RESULT;
+  const { name, birthDate, birthTime, zodiacText, pillars, ohangScores } = data;
+
+  useEffect(() => {
+    const parsed = parseResultFromSearch(dataParam);
+    if (parsed) {
+      setResultData(parsed);
+      try {
+        localStorage.setItem(GUEST_SAJU_STORAGE_KEY, JSON.stringify(parsed));
+      } catch {
+        // ignore localStorage errors
+      }
+      return;
+    }
+
+    if (typeof window !== "undefined") {
+      const storedRaw = localStorage.getItem(GUEST_SAJU_STORAGE_KEY);
+      if (storedRaw) {
+        try {
+          setResultData(JSON.parse(storedRaw) as SajuResultPayload);
+          return;
+        } catch {
+          // ignore parse errors
+        }
+      }
+    }
+
+    setResultData(MOCK_RESULT);
+  }, [dataParam]);
+
+  const persistResult = useCallback(
+    async (action: CtaAction) => {
+      if (!resultData || !userId) {
+        setCtaStatus("error");
+        setCtaMessage("저장할 사주 정보나 사용자 정보를 찾지 못했습니다.");
+        return;
+      }
+
+      setCtaStatus("pending");
+      setCtaMessage(
+        action === "save" ? "사주 결과를 저장하고 있어요..." : "상담 준비용으로 저장 중입니다...",
+      );
+      const { error } = await supabase.from("bazi_saved_results").insert({
+        clerk_id: userId,
+        source_action: action,
+        payload: resultData,
+      });
+
+      if (error) {
+        setCtaStatus("error");
+        setCtaMessage("DB 저장에 실패했습니다. 잠시 후 다시 시도해주세요.");
+        return;
+      }
+
+      setCtaStatus("success");
+      setCtaMessage(
+        action === "save"
+          ? "방금 본 사주가 내 계정에 저장됐어요."
+          : "상담용 사주 정보를 저장했어요. 채팅을 시작하세요!",
+      );
+      try {
+        localStorage.removeItem(PENDING_ACTION_STORAGE_KEY);
+      } catch {
+        // ignore
+      }
+    },
+    [resultData, supabase, userId],
+  );
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || !resultData) return;
+    const pending =
+      typeof window !== "undefined" ? localStorage.getItem(PENDING_ACTION_STORAGE_KEY) : null;
+    if (pending === "save" || pending === "consult") {
+      void persistResult(pending);
+    }
+  }, [isLoaded, isSignedIn, persistResult, resultData]);
+
+  const handleAction = async (action: CtaAction) => {
+    if (!resultData) return;
+
+    try {
+      localStorage.setItem(GUEST_SAJU_STORAGE_KEY, JSON.stringify(resultData));
+      localStorage.setItem(PENDING_ACTION_STORAGE_KEY, action);
+    } catch {
+      // ignore
+    }
+
+    if (!isLoaded) {
+      setCtaStatus("pending");
+      setCtaMessage("로그인 상태를 확인하고 있어요...");
+      return;
+    }
+
+    if (!isSignedIn) {
+      openSignIn({ redirectUrl: window.location.href });
+      return;
+    }
+
+    await persistResult(action);
+  };
 
   const hasKillerData = useMemo(
     () =>
@@ -858,17 +932,31 @@ const SajuResultPage = () => {
           <div className="mx-auto max-w-5xl space-y-3">
             <Button
               size="lg"
-              variant="secondary"
-              className="h-14 w-full text-lg font-semibold bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-lg hover:from-pink-600 hover:to-rose-600"
+              className="h-14 w-full text-lg font-semibold bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-lg hover:from-violet-700 hover:to-purple-700"
+              onClick={() => handleAction("consult")}
+              disabled={ctaStatus === "pending"}
             >
-              상담 채팅하기
+              AI 상담하기
             </Button>
             <Button
               size="lg"
-              className="h-14 w-full text-lg font-semibold bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-lg hover:from-violet-700 hover:to-purple-700"
+              variant="secondary"
+              className="h-14 w-full text-lg font-semibold bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-lg hover:from-pink-600 hover:to-rose-600"
+              onClick={() => handleAction("save")}
+              disabled={ctaStatus === "pending"}
             >
-              상세 사주풀이
+              저장하기
             </Button>
+            {ctaMessage && (
+              <p
+                className={cn(
+                  "text-center text-sm",
+                  ctaStatus === "error" ? "text-rose-600" : "text-slate-700",
+                )}
+              >
+                {ctaMessage}
+              </p>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <Button variant="outline" size="sm" className="h-12">
                 <Share2 className="mr-1 h-4 w-4" />

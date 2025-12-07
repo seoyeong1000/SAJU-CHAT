@@ -26,3 +26,10 @@
   - [x] `.env.example`에 `ENGINE_MODE`, `FALLBACK_STRATEGY`, ephe 경로 관련 주석 추가
   - [x] README/docs에 설치 명령, ephe 다운로드 방법, Windows 빌드 실패 시 wasm fallback 절차 기록
   - [x] /bazi-test 등 결과 확인용 UI/페이지 추가 지침 반영
+
+- [ ] 사용자 플로우 & 데이터 저장
+  - [x] 게스트 모드 허용: /bazi-test → 결과를 URL/localStorage로 전달, DB 미사용
+  - [x] CTA(저장하기/AI 상담하기) 시 Clerk 로그인 모달 트리거, 로그인 후 직전 결과 자동 저장
+  - [x] Supabase `bazi_saved_results` 테이블 추가 (source_action 포함), Dev RLS 비활성
+  - [x] `saved_sajus` 테이블 스키마 정의 및 my-page에서 목록 조회/딥링크(`/saju-result?data=`) 구현
+  - [ ] 상담 기록 UI/데이터 연동 (my-page 섹션은 현재 플레이스홀더)

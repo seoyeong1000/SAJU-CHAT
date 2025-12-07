@@ -324,6 +324,32 @@ Prod:
 owner_id 컬럼 추가 후,
 owner_id = auth.jwt()->>'sub' 기반 RLS 정책 별도 PRD/마이그레이션에서 정의.
 
+6.4 사용자 저장본 테이블 (게스트 → 로그인 연속 저장 플로우)
+
+사용자가 게스트 모드로 사주를 보고, CTA(저장/상담) 클릭 시 로그인 후 자동으로 DB에 저장하기 위한 테이블.
+
+saved_sajus (사용자별 저장 목록, my-page에서 조회)
+id UUID PK DEFAULT uuid_generate_v4()
+clerk_id TEXT NOT NULL
+name TEXT NOT NULL
+birth_date DATE
+relationship TEXT
+day_pillar TEXT
+payload JSONB                -- /saju-result에서 사용하는 직렬화된 결과
+created_at TIMESTAMPTZ DEFAULT now()
+updated_at TIMESTAMPTZ DEFAULT now()
+인덱스: clerk_id, created_at DESC
+RLS: Dev 비활성, Prod 전환 시 clerk_id = auth.jwt()->>'sub'
+
+bazi_saved_results (게스트 → 로그인 직후 자동 저장용, source_action 포함)
+id UUID PK DEFAULT uuid_generate_v4()
+clerk_id TEXT NOT NULL
+source_action TEXT CHECK (IN ('save','consult'))
+payload JSONB NOT NULL       -- 직전 게스트 결과
+created_at TIMESTAMPTZ DEFAULT now()
+인덱스: clerk_id, created_at DESC
+RLS: Dev 비활성, Prod 전환 시 clerk_id = auth.jwt()->>'sub'
+
 7. 설치 & 개발 가이드
 7.1 패키지 설치
 # Swiss Ephemeris & 보조 엔진
@@ -395,3 +421,5 @@ Fallback 발생률:
  Prod 전환 시, RLS 정책은 별도 마이그레이션/PRD로 관리.
 
  /bazi-test 페이지 또는 유사 테스트 UI에서 JSON 결과와 debug 정보를 시각 확인 가능.
+
+ UX 플로우: 게스트로 /bazi-test 입력 → /saju-result에 URL/LocalStorage로 전달 → CTA(저장하기/AI 상담하기) 시 Clerk 로그인 모달 → 로그인 완료 시 직전 결과를 bazi_saved_results에 자동 저장 → /my-page에서 saved_sajus 기반 목록 조회가 가능할 것.

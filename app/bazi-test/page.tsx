@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +19,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { GUEST_SAJU_STORAGE_KEY } from "@/lib/storage-keys";
 import { cn } from "@/lib/utils";
+import { FiveElement, PillarKey, SajuResultPayload } from "@/types/saju";
 import { AlertCircle, Loader2, Search } from "lucide-react";
 import {
   PolarAngleAxis,
@@ -49,9 +52,7 @@ type FormState = {
   fallbackStrategy: "allowApprox" | "strict";
 };
 
-type FiveElement = "wood" | "fire" | "earth" | "metal" | "water";
 type Polarity = "yin" | "yang";
-type PillarKey = "hour" | "day" | "month" | "year";
 
 type PillarElement = {
   hanja: string | null;
@@ -504,7 +505,80 @@ const DEFAULT_FORM: FormState = {
   fallbackStrategy: "allowApprox",
 };
 
+const buildOhangScores = (counts: Record<FiveElement, number>): Record<FiveElement, number> => {
+  const total = Object.values(counts).reduce((acc, cur) => acc + (cur ?? 0), 0);
+  return ELEMENT_ORDER.reduce((acc, key) => {
+    const value = counts[key] ?? 0;
+    acc[key] = total > 0 ? Math.round((value / total) * 100) : 0;
+    return acc;
+  }, {} as Record<FiveElement, number>);
+};
+
+const buildSajuPayload = (
+  form: FormState,
+  normalized: NormalizedChart | null,
+  counts: Record<FiveElement, number>,
+  analysis?: AnalysisResult,
+): SajuResultPayload | null => {
+  if (!normalized) return null;
+
+  const toPillarInfo = (key: PillarKey, pillar?: ChartPillar | null) => ({
+    stem: pillar?.stem?.hanja ?? "?",
+    branch: pillar?.branch?.hanja ?? "?",
+    element: pillar?.stem?.element ?? "earth",
+    branchElement: pillar?.branch?.element ?? pillar?.stem?.element ?? "earth",
+    tenGod: pillar?.stem?.tenGod ?? undefined,
+    tenGodBranch: pillar?.branch?.tenGod ?? undefined,
+    hiddenStem: pillar?.branch?.pronunciation ?? pillar?.branch?.hangul ?? undefined,
+    label: PILLAR_LABELS[key],
+  });
+
+  const birthTime = form.timeUnknown ? "시간 미상" : form.birthTime || "00:00";
+  const yearStem = normalized.pillars.year?.stem?.hanja ?? "";
+  const yearBranch = normalized.pillars.year?.branch?.hanja ?? "";
+  const zodiacText = yearStem && yearBranch ? `${yearStem}${yearBranch}년` : undefined;
+  const ohangScores = buildOhangScores(counts);
+
+  return {
+    name: form.name || "게스트",
+    birthDate: form.birthDate,
+    birthTime,
+    gender: form.gender,
+    zodiacText,
+    pillars: {
+      hour: toPillarInfo("hour", normalized.pillars.hour),
+      day: toPillarInfo("day", normalized.pillars.day),
+      month: toPillarInfo("month", normalized.pillars.month),
+      year: toPillarInfo("year", normalized.pillars.year),
+    },
+    sipseong: {
+      hour: normalized.pillars.hour?.stem?.tenGod ?? undefined,
+      day: normalized.pillars.day?.stem?.tenGod ?? undefined,
+      month: normalized.pillars.month?.stem?.tenGod ?? undefined,
+      year: normalized.pillars.year?.stem?.tenGod ?? undefined,
+    },
+    woonsung: undefined,
+    inmyeonggang: analysis?.core?.strength_score ?? undefined,
+    ohangScores,
+    balance: {
+      geumun: ohangScores.metal ?? 0,
+      seongsaundong: ohangScores.wood ?? 0,
+    },
+    analysis: {
+      strengthIndex: analysis?.core?.strength_score ?? undefined,
+      strengthLabel: analysis?.core?.strength_label ?? undefined,
+      fiveElementDetail: counts,
+      tenGodSummary: analysis?.core?.summary ?? undefined,
+    },
+    meta: {
+      source: "guest",
+      savedAt: new Date().toISOString(),
+    },
+  };
+};
+
 const BaziTestPage = () => {
+  const router = useRouter();
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const [result, setResult] = useState<BaziResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -585,6 +659,20 @@ const BaziTestPage = () => {
 
       const data = (await res.json()) as BaziResponse;
       setResult(data);
+
+      const normalized = normalizeChart(data);
+      const counts = deriveElementCounts(data, normalized);
+      const sharePayload = buildSajuPayload(form, normalized, counts, data.analysis_result);
+      if (sharePayload) {
+        const serialized = JSON.stringify(sharePayload);
+        try {
+          localStorage.setItem(GUEST_SAJU_STORAGE_KEY, serialized);
+        } catch {
+          // ignore storage write failures
+        }
+        const encoded = encodeURIComponent(serialized);
+        router.push(`/saju-result?data=${encoded}&source=guest`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "알 수 없는 오류가 발생했습니다.");
     } finally {
