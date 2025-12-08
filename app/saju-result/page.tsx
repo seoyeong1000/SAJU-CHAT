@@ -1,39 +1,22 @@
 "use client";
 
 import { useAuth, useClerk } from "@clerk/nextjs";
+import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { Separator } from "@/components/ui/separator";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useClerkSupabaseClient } from "@/lib/supabase/clerk-client";
 import { GUEST_SAJU_STORAGE_KEY, PENDING_ACTION_STORAGE_KEY } from "@/lib/storage-keys";
 import { cn } from "@/lib/utils";
 import { FiveElement, PillarInfo, PillarKey, SajuResultPayload } from "@/types/saju";
-import {
-  BarChart3,
-  BookOpen,
-  Briefcase,
-  Calendar,
-  CheckCircle,
-  ChevronDown,
-  Compass,
-  DollarSign,
-  Info,
-  Palette,
-  Printer,
-  Share2,
-  TrendingUp,
-  Users,
-} from "lucide-react";
+import { BarChart3, MessageCircle, Sparkles, Zap } from "lucide-react";
 
 const ELEMENT_LABEL: Record<FiveElement, string> = {
   wood: "목",
@@ -58,6 +41,8 @@ const PILLAR_LABEL: Record<PillarKey, string> = {
   year: "연주",
 };
 
+type TabKey = "summary" | "love" | "career" | "wealth" | "health";
+
 const TENGOD_FRIENDLY: Record<string, { label: string; meaning: string }> = {
   비견: { label: "협력자형", meaning: "동료와 함께할 때 힘이 납니다." },
   겁재: { label: "경쟁자형", meaning: "경쟁 속에서 성장합니다." },
@@ -71,46 +56,178 @@ const TENGOD_FRIENDLY: Record<string, { label: string; meaning: string }> = {
   정인: { label: "후원자형", meaning: "돌봄과 지원을 잘합니다." },
 };
 
-const ELEMENT_COLORS: Record<
-  FiveElement,
-  { text: string; soft: string; bar: string; gradient: string; ring: string }
-> = {
+const DOMAIN_BY_TAB: Record<TabKey, string> = {
+  summary: "general",
+  love: "love",
+  career: "career",
+  wealth: "wealth",
+  health: "health",
+};
+
+const SOLUTION_CHECK_KEY = "saju_solution_checks";
+
+type InterpretationRecord = {
+  id: string;
+  title?: string | null;
+  content?: string | null;
+  trust_level?: string | null;
+  domain?: string | null;
+  layer?: string | null;
+};
+
+type SolutionRecord = {
+  id: string;
+  title?: string | null;
+  content?: string | null;
+  difficulty?: string | null;
+  time_required?: string | null;
+  severity?: string | null;
+};
+
+const ELEMENT_THEME: Record<FiveElement, { tone: string; glow: string; text: string; bg: string }> = {
   wood: {
-    text: "text-emerald-600",
-    soft: "bg-emerald-50",
-    bar: "bg-gradient-to-r from-emerald-400 to-emerald-600",
-    gradient: "from-emerald-400 to-emerald-600",
-    ring: "ring-emerald-200",
+    tone: "#34d399",
+    glow: "shadow-[0_10px_30px_rgba(52,211,153,0.35)]",
+    text: "text-emerald-400",
+    bg: "bg-emerald-400/20",
   },
   fire: {
-    text: "text-red-500",
-    soft: "bg-red-50",
-    bar: "bg-gradient-to-r from-red-400 to-red-600",
-    gradient: "from-red-400 to-red-600",
-    ring: "ring-red-200",
+    tone: "#fb7185",
+    glow: "shadow-[0_10px_30px_rgba(251,113,133,0.35)]",
+    text: "text-rose-400",
+    bg: "bg-rose-400/20",
   },
   earth: {
-    text: "text-amber-600",
-    soft: "bg-amber-50",
-    bar: "bg-gradient-to-r from-amber-300 to-amber-500",
-    gradient: "from-amber-300 to-amber-500",
-    ring: "ring-amber-200",
+    tone: "#fbbf24",
+    glow: "shadow-[0_10px_30px_rgba(251,191,36,0.35)]",
+    text: "text-amber-400",
+    bg: "bg-amber-400/20",
   },
   metal: {
-    text: "text-slate-700",
-    soft: "bg-slate-100",
-    bar: "bg-gradient-to-r from-slate-300 to-slate-500",
-    gradient: "from-slate-300 to-slate-500",
-    ring: "ring-slate-200",
+    tone: "#cbd5e1",
+    glow: "shadow-[0_10px_30px_rgba(148,163,184,0.35)]",
+    text: "text-slate-300",
+    bg: "bg-slate-400/20",
   },
   water: {
-    text: "text-blue-600",
-    soft: "bg-blue-50",
-    bar: "bg-gradient-to-r from-blue-400 to-blue-600",
-    gradient: "from-blue-400 to-blue-600",
-    ring: "ring-blue-200",
+    tone: "#60a5fa",
+    glow: "shadow-[0_10px_30px_rgba(96,165,250,0.35)]",
+    text: "text-blue-400",
+    bg: "bg-blue-400/20",
   },
 };
+
+const DEFAULT_CONTENT: Record<TabKey, { interpretations: InterpretationRecord[]; solutions: SolutionRecord[] }> = {
+  summary: {
+    interpretations: [
+      {
+        id: "default-summary-intp-1",
+        title: "오행 불균형 경향",
+        content:
+          "목(Wood) 기운이 강하여 시작하고 키우는 힘은 뛰어나지만, 금(Metal) 기운이 약해 마무리·정리·절제가 부족해질 수 있습니다.",
+        trust_level: "high",
+      },
+      {
+        id: "default-summary-intp-2",
+        title: "일간 기질 포인트",
+        content:
+          "일간(Day Master)은 추진력이 좋으나, 스스로에게 관대해 흐트러짐이 올 수 있습니다. 금 기운 보완 시 일관성과 단호함이 살아납니다.",
+        trust_level: "high",
+      },
+    ],
+    solutions: [
+      {
+        id: "default-summary-sol-1",
+        title: "금 기운 보완 루틴",
+        content: "흰색/메탈릭 계열 소품을 책상에 두고, 하루 한 번 ‘거절/정리’ 연습을 해보세요.",
+      },
+      {
+        id: "default-summary-sol-2",
+        title: "마무리 근육 강화",
+        content: "작은 업무 3건을 오늘 안에 완결 짓는 ‘완료 세트’를 실행해 흐름을 닫는 습관을 만듭니다.",
+      },
+    ],
+  },
+  love: {
+    interpretations: [
+      {
+        id: "default-love-intp-1",
+        title: "감정 교류 확장",
+        content: "정서적 교감이 잘 이뤄지는 시기입니다. 솔직한 대화가 관계를 진전시킵니다.",
+        trust_level: "high",
+      },
+    ],
+    solutions: [
+      {
+        id: "default-love-sol-1",
+        title: "하루 15분 감정 나누기",
+        content: "하루 한 번, 감사했던 일을 서로 나누며 신뢰를 쌓으세요.",
+      },
+    ],
+  },
+  career: {
+    interpretations: [
+      {
+        id: "default-career-intp-1",
+        title: "가시화가 필요한 시점",
+        content: "성과를 눈에 보이게 정리하면 주변의 지지가 늘어납니다.",
+        trust_level: "high",
+      },
+    ],
+    solutions: [
+      {
+        id: "default-career-sol-1",
+        title: "1페이지 보고서 작성",
+        content: "이번 주 핵심 성과를 1페이지로 요약해 공유하세요.",
+      },
+      {
+        id: "default-career-sol-2",
+        title: "멘토 1명에게 피드백",
+        content: "신뢰하는 동료나 멘토에게 초안 피드백을 요청하세요.",
+      },
+    ],
+  },
+  wealth: {
+    interpretations: [
+      {
+        id: "default-wealth-intp-1",
+        title: "현금 흐름 점검기",
+        content: "고정비와 변동비를 다시 점검하면 재물운이 안정됩니다.",
+        trust_level: "high",
+      },
+    ],
+    solutions: [
+      {
+        id: "default-wealth-sol-1",
+        title: "구독/정기결제 정리",
+        content: "사용하지 않는 구독을 해지하고 자동이체 비율을 조정하세요.",
+      },
+    ],
+  },
+  health: {
+    interpretations: [
+      {
+        id: "default-health-intp-1",
+        title: "회복 리듬 형성",
+        content: "잠과 수분 관리가 컨디션을 지탱합니다. 리듬을 고정하세요.",
+        trust_level: "high",
+      },
+    ],
+    solutions: [
+      {
+        id: "default-health-sol-1",
+        title: "취침 루틴 고정",
+        content: "취침 1시간 전 불빛을 줄이고 미지근한 물 한 컵을 마십니다.",
+      },
+      {
+        id: "default-health-sol-2",
+        title: "10분 스트레칭",
+        content: "아침/저녁 10분 스트레칭으로 순환을 돕습니다.",
+      },
+    ],
+  },
+};
+
 const MOCK_RESULT: SajuResultPayload = {
   name: "서영",
   birthDate: "1988-08-28",
@@ -220,16 +337,15 @@ const getFriendlyTenGod = (name?: string | null): { title: string; detail: strin
   if (friendly) return { title: friendly.label, detail: friendly.meaning };
   return { title: `${name} (관계)`, detail: "나와의 관계를 나타내는 기운입니다." };
 };
+
 const DonutChart = ({
   label,
   value,
-  colorClass,
-  trackColor = "#E5E7EB",
+  tone,
 }: {
   label: string;
   value: number;
-  colorClass: string;
-  trackColor?: string;
+  tone: string;
 }) => {
   const radius = 56;
   const circumference = 2 * Math.PI * radius;
@@ -238,9 +354,17 @@ const DonutChart = ({
 
   return (
     <div className="text-center">
-      <div className="relative mx-auto mb-3 h-36 w-36">
+      <div className="relative mx-auto mb-4 h-36 w-36 text-slate-600">
         <svg className="h-full w-full -rotate-90">
-          <circle cx="70" cy="70" r={radius} stroke={trackColor} strokeWidth="16" fill="none" />
+          <circle
+            cx="70"
+            cy="70"
+            r={radius}
+            stroke="currentColor"
+            strokeWidth="16"
+            className="opacity-25"
+            fill="none"
+          />
           <circle
             cx="70"
             cy="70"
@@ -248,39 +372,117 @@ const DonutChart = ({
             strokeWidth="16"
             fill="none"
             strokeDasharray={`${dash} ${circumference - dash}`}
-            className={cn(colorClass, "transition-all duration-500")}
+            stroke={tone}
+            className="drop-shadow-[0_0_16px_var(--ring)] transition-all duration-500"
             strokeLinecap="round"
           />
         </svg>
-        <div className="absolute inset-0 rotate-90">
-          <div className="flex h-full items-center justify-center">
-            <div className="text-center">
-              <div className="text-xs text-slate-500">{label}</div>
-              <div className="text-xl font-semibold text-slate-900">{value.toFixed(1)}%</div>
-            </div>
+        <div className="absolute inset-0">
+          <div className="flex h-full flex-col items-center justify-center">
+            <div className="text-xs uppercase tracking-wide text-slate-400">{label}</div>
+            <div className="text-2xl font-semibold text-slate-50">{value.toFixed(1)}%</div>
           </div>
         </div>
       </div>
     </div>
   );
 };
+
+const PillarCard = ({ pillarKey, pillar }: { pillarKey: PillarKey; pillar: PillarInfo }) => {
+  const theme = ELEMENT_THEME[pillar.element];
+  const friendly = getFriendlyTenGod(pillar.tenGod);
+  const style = { "--tone": theme.tone } as CSSProperties;
+  const hanjaKey = pillar.branchElement ?? pillar.element;
+
+  return (
+    <Card
+      style={style}
+      className={cn(
+        "relative overflow-hidden border border-white/10 bg-slate-900/50 backdrop-blur-xl",
+        "ring-1 ring-inset ring-white/5 transition hover:-translate-y-1 hover:shadow-2xl",
+        theme.glow,
+      )}
+    >
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background: `radial-gradient(circle at 20% 20%, ${theme.tone}33 0%, transparent 55%)`,
+        }}
+      />
+      <CardHeader className="relative pb-4">
+        <div className="flex items-center justify-between">
+          <Badge variant="secondary" className="border border-white/10 bg-slate-900/60 text-xs uppercase text-slate-400">
+            {PILLAR_LABEL[pillarKey]}
+          </Badge>
+          <span className="text-xs text-slate-500">{pillar.branchElement ?? pillar.element}</span>
+        </div>
+        <CardTitle className="flex items-baseline gap-2 text-2xl font-semibold text-slate-50">
+          <span className="text-4xl leading-none text-slate-50">{pillar.branch}</span>
+          <span className="text-lg text-slate-300">{pillar.stem}</span>
+        </CardTitle>
+        <div className="flex items-center gap-2 text-sm text-slate-400">
+          <span className={cn("rounded-full px-2 py-1 text-[10px] font-semibold uppercase", theme.bg, theme.text)}>
+            {ELEMENT_LABEL[pillar.element]}
+          </span>
+          <span className={cn("text-[11px]", theme.text)}>{friendly.title}</span>
+        </div>
+        <span
+          className={cn(
+            "pointer-events-none absolute -right-2 bottom-2 text-8xl font-black opacity-10",
+            theme.text.replace("text-", "text-"),
+          )}
+        >
+          {ELEMENT_HANJA[hanjaKey]}
+        </span>
+      </CardHeader>
+      <CardContent className="relative space-y-3">
+        <div className="flex items-center justify-between rounded-xl border border-white/10 bg-slate-900/60 px-4 py-2 text-sm text-slate-400">
+          <span>십성</span>
+          <span className="text-slate-50">{pillar.tenGod}</span>
+        </div>
+        <div className="flex items-center justify-between rounded-xl border border-white/10 bg-slate-900/60 px-4 py-2 text-sm text-slate-400">
+          <span>지장간</span>
+          <span className="text-slate-50">{pillar.hiddenStem ?? "없음"}</span>
+        </div>
+        <div className="flex items-center justify-between rounded-xl border border-white/10 bg-slate-900/60 px-4 py-2 text-sm text-slate-400">
+          <span>12운성</span>
+          <span className="text-slate-50">{pillar.twelveSpirit ?? "-"}</span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
+
+const typingPhrases = ["저랑 잘 맞을까요?", "올해 연애운이 궁금해요", "커리어 전성기, 언제일까요?"];
+
 const SajuResultPage = () => {
   const searchParams = useSearchParams();
   const dataParam = searchParams.get("data");
   const supabase = useClerkSupabaseClient();
   const { isLoaded, isSignedIn, userId } = useAuth();
   const { openSignIn } = useClerk();
+  const router = useRouter();
 
   const [resultData, setResultData] = useState<SajuResultPayload | null>(
     () => parseResultFromSearch(dataParam) ?? null,
   );
   const [ctaStatus, setCtaStatus] = useState<"idle" | "pending" | "success" | "error">("idle");
   const [ctaMessage, setCtaMessage] = useState<string | null>(null);
-  const [showLongFortune, setShowLongFortune] = useState(false);
-  const [showGlossary, setShowGlossary] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabKey>("summary");
+  const [typingIndex, setTypingIndex] = useState(0);
+  const [typingChar, setTypingChar] = useState(0);
+  const [contentMap, setContentMap] = useState<
+    Record<TabKey, { interpretations: InterpretationRecord[]; solutions: SolutionRecord[] }>
+  >(DEFAULT_CONTENT);
+  const [isContentLoading, setIsContentLoading] = useState(false);
+  const [contentError, setContentError] = useState<string | null>(null);
+  const [solutionChecks, setSolutionChecks] = useState<Record<string, boolean>>({});
 
   const data = resultData ?? MOCK_RESULT;
   const { name, birthDate, birthTime, zodiacText, pillars, ohangScores } = data;
+  const strengthLabel = data.analysis?.strengthLabel ?? "중간";
+  const tenGodSummary = data.analysis?.tenGodSummary ?? "강점과 약점을 기반으로 한 맞춤 인사이트입니다.";
+  const inmyeonggang = data.inmyeonggang ?? 0;
 
   useEffect(() => {
     const parsed = parseResultFromSearch(dataParam);
@@ -308,6 +510,90 @@ const SajuResultPage = () => {
 
     setResultData(MOCK_RESULT);
   }, [dataParam]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const stored = localStorage.getItem(SOLUTION_CHECK_KEY);
+      if (stored) {
+        setSolutionChecks(JSON.parse(stored) as Record<string, boolean>);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const loadTabContent = useCallback(async () => {
+    setIsContentLoading(true);
+    setContentError(null);
+    try {
+      const entries = await Promise.all(
+        (Object.entries(DOMAIN_BY_TAB) as [TabKey, string][]).map(async ([tabKey, domain]) => {
+          const { data: interpretations, error: interpretationsError } = await supabase
+            .from("master_interpretations")
+            .select("*")
+            .eq("domain", domain)
+            .eq("is_active", true)
+            .eq("lang", "ko")
+            .order("priority", { ascending: true })
+            .limit(6);
+
+          const { data: solutions, error: solutionsError } = await supabase
+            .from("master_solutions")
+            .select("*")
+            .eq("domain", domain)
+            .eq("is_active", true)
+            .eq("lang", "ko")
+            .order("created_at", { ascending: true })
+            .limit(6);
+
+          if (interpretationsError || solutionsError) {
+            throw interpretationsError ?? solutionsError;
+          }
+
+          return [
+            tabKey,
+            {
+              interpretations: interpretations ?? [],
+              solutions: solutions ?? [],
+            },
+          ] as const;
+        }),
+      );
+
+      setContentMap((prev) => {
+        const next = { ...prev };
+        entries.forEach(([tabKey, content]) => {
+          const hasData =
+            (content.interpretations?.length ?? 0) > 0 || (content.solutions?.length ?? 0) > 0;
+          next[tabKey] = hasData ? content : DEFAULT_CONTENT[tabKey];
+        });
+        return next;
+      });
+    } catch (error) {
+      console.error("interpretation fetch failed", error);
+      setContentError("콘텐츠를 불러오는 데 실패했어요. 기본 해석을 대신 보여드려요.");
+      setContentMap(DEFAULT_CONTENT);
+    } finally {
+      setIsContentLoading(false);
+    }
+  }, [supabase]);
+
+  useEffect(() => {
+    void loadTabContent();
+  }, [loadTabContent]);
+
+  const toggleSolutionCheck = (id: string, checked: boolean) => {
+    setSolutionChecks((prev) => {
+      const next = { ...prev, [id]: checked };
+      try {
+        localStorage.setItem(SOLUTION_CHECK_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
 
   const persistResult = useCallback(
     async (action: CtaAction) => {
@@ -381,595 +667,388 @@ const SajuResultPage = () => {
     await persistResult(action);
   };
 
-  const hasKillerData = useMemo(
-    () =>
-      Object.values(pillars).some(
-        (p) => p.twelveKiller || p.auspicious || p.inauspicious || p.twelveSpirit,
-      ),
-    [pillars],
-  );
+  const topElement = useMemo(() => {
+    const entries = Object.entries(ohangScores) as [FiveElement, number][];
+    return entries.sort((a, b) => b[1] - a[1])[0];
+  }, [ohangScores]);
 
-  const monthScores = [65, 72, 68, 85, 90, 88, 75, 82, 78, 70, 80, 85];
+  const tenGodOfDay = getFriendlyTenGod(pillars.day.tenGod);
+  const topElementTheme = ELEMENT_THEME[topElement[0]];
 
-  const bigLuck = [
-    { label: "10대", years: "2008-2017", ganji: "임오", mood: "탐색기", color: "text-blue-600" },
-    { label: "20대", years: "2018-2027", ganji: "계미", mood: "성장기", color: "text-emerald-600" },
-    { label: "30대", years: "2028-2037", ganji: "갑신", mood: "전성기", color: "text-violet-600" },
-    { label: "40대", years: "2038-2047", ganji: "을유", mood: "확장기", color: "text-amber-600" },
-    { label: "50대", years: "2048-2057", ganji: "병술", mood: "안정기", color: "text-slate-700" },
-    { label: "60대", years: "2058-2067", ganji: "정해", mood: "정리·준비", color: "text-pink-600" },
-    { label: "70대", years: "2068-2077", ganji: "무자", mood: "회고·여유", color: "text-teal-600" },
-    { label: "80대", years: "2078-2087", ganji: "기축", mood: "여유", color: "text-slate-600" },
-    { label: "90대", years: "2088-2097", ganji: "경인", mood: "안정", color: "text-slate-600" },
-    { label: "100세", years: "2098-2107", ganji: "신묘", mood: "안정", color: "text-slate-600" },
-  ];
-  const visibleBigLuck = showLongFortune ? bigLuck : bigLuck.slice(0, 6);
+  const typedText = typingPhrases[typingIndex].slice(0, typingChar);
+  useEffect(() => {
+    const current = typingPhrases[typingIndex];
+    const isDone = typingChar >= current.length;
+    const timer = setTimeout(() => {
+      if (isDone) {
+        setTypingChar(0);
+        setTypingIndex((prev) => (prev + 1) % typingPhrases.length);
+      } else {
+        setTypingChar((prev) => prev + 1);
+      }
+    }, isDone ? 1400 : 90);
+    return () => clearTimeout(timer);
+  }, [typingChar, typingIndex]);
 
-  return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 print:bg-white">
-      <style jsx global>{`
-        @import url("https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css");
-        * {
-          font-family: "Pretendard Variable", "Pretendard", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        }
-      `}</style>
-
-      <header className="bg-gradient-to-br from-violet-50 to-purple-50 border-b border-slate-200">
-        <div className="mx-auto flex max-w-5xl items-center gap-4 px-4 py-6">
-          <Avatar className="h-16 w-16 border-4 border-white shadow-lg">
-            <AvatarFallback className="bg-violet-500 text-xl font-bold text-white">
-              {name.slice(0, 2)}
-            </AvatarFallback>
-          </Avatar>
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">{name}님의 사주</h1>
-            <p className="mt-1 text-sm text-slate-600">
-              {birthDate} {birthTime} 출생 · {data.gender === "female" ? "여자" : "남자"}
-            </p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Badge className="bg-violet-100 text-violet-700">{zodiacText ?? "간지 정보"}</Badge>
-              <Badge className="bg-amber-100 text-amber-700">토(土) 일주</Badge>
-            </div>
-          </div>
+  const renderTabContent = (tabKey: TabKey) => {
+    if (isContentLoading) {
+      return (
+        <div className="rounded-xl border border-white/10 bg-slate-900/70 px-4 py-6 text-center text-sm text-slate-400">
+          데이터를 불러오는 중입니다...
         </div>
-      </header>
-      <main className="mx-auto max-w-5xl space-y-6 px-4 py-6 print:space-y-4">
-        {/* 내 사주팔자 (만세력 핵심 정보) */}
-        <Card className="border-2 border-violet-200 shadow-lg">
-          <CardHeader className="bg-gradient-to-r from-violet-50 to-purple-50">
-            <CardTitle className="text-center text-xl">내 사주팔자</CardTitle>
-            <p className="text-center text-sm text-slate-600">
-              천간/지지 · 지장간 · 12운성 · 12신살 · 길성/흉성을 한눈에 볼 수 있어요.
-            </p>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[760px] text-sm">
-                <thead className="bg-slate-50">
-                  <tr className="border-b border-slate-200">
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600">구분</th>
-                    {(Object.keys(pillars) as PillarKey[]).map((key) => (
-                      <th
-                        key={`head-${key}`}
-                        className={cn(
-                          "px-4 py-3 text-center text-xs font-semibold text-slate-700",
-                          key === "day" && "text-violet-700",
-                        )}
-                      >
-                        {PILLAR_LABEL[key]}
-                        {key === "day" && <span className="ml-1 text-[11px] text-violet-600">⭐ 본인</span>}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-b border-slate-200 hover:bg-slate-50">
-                    <td className="px-4 py-3 text-xs font-semibold text-slate-600">천간·십성</td>
-                    {(Object.keys(pillars) as PillarKey[]).map((key) => {
-                      const p = pillars[key];
-                      const tg = getFriendlyTenGod(p.tenGod);
-                      const element = p.element;
-                      const palette = ELEMENT_COLORS[element];
-                      return (
-                        <td key={`stem-${key}`} className="px-4 py-3 text-center">
-                          <div
-                            className={cn(
-                              "inline-flex flex-col items-center justify-center rounded-xl border px-3 py-2",
-                              palette.soft,
-                              palette.text,
-                              "border-slate-200 shadow-sm",
-                            )}
-                          >
-                            <div className="text-3xl font-bold">{p.stem}</div>
-                            <div className="text-xs font-semibold uppercase text-slate-600">
-                              {ELEMENT_HANJA[element]} / {ELEMENT_LABEL[element]}
-                            </div>
-                            <div className="mt-1 rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-700 shadow-inner">
-                              {tg.title}
-                            </div>
-                          </div>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                  <tr className="border-b border-slate-200 hover:bg-slate-50">
-                    <td className="px-4 py-3 text-xs font-semibold text-slate-600">지지·십성</td>
-                    {(Object.keys(pillars) as PillarKey[]).map((key) => {
-                      const p = pillars[key];
-                      const tg = getFriendlyTenGod(p.tenGodBranch ?? p.tenGod);
-                      const branchElement = p.branchElement ?? p.element;
-                      const palette = ELEMENT_COLORS[branchElement];
-                      return (
-                        <td key={`branch-${key}`} className="px-4 py-3 text-center">
-                          <div
-                            className={cn(
-                              "inline-flex flex-col items-center justify-center rounded-xl border px-3 py-2",
-                              palette.soft,
-                              palette.text,
-                              "border-slate-200 shadow-sm",
-                            )}
-                          >
-                            <div className="text-3xl font-bold">{p.branch}</div>
-                            <div className="text-xs font-semibold uppercase text-slate-600">
-                              {ELEMENT_HANJA[branchElement]} / {ELEMENT_LABEL[branchElement]}
-                            </div>
-                            <div className="mt-1 rounded-full bg-white px-2 py-0.5 text-[11px] text-slate-700 shadow-inner">
-                              {tg.title}
-                            </div>
-                          </div>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                  <tr className="border-b border-slate-200 hover:bg-slate-50">
-                    <td className="px-4 py-3 text-xs font-semibold text-slate-600">지장간</td>
-                    {(Object.keys(pillars) as PillarKey[]).map((key) => {
-                      const p = pillars[key];
-                      return (
-                        <td key={`hidden-${key}`} className="px-4 py-3 text-center text-xs text-slate-700">
-                          {p.hiddenStem ?? "지장간 없음"}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                  <tr className="border-b border-slate-200 hover:bg-slate-50">
-                    <td className="px-4 py-3 text-xs font-semibold text-slate-600">12운성</td>
-                    {(Object.keys(pillars) as PillarKey[]).map((key) => {
-                      const p = pillars[key];
-                      return (
-                        <td key={`spirit-${key}`} className="px-4 py-3 text-center text-xs text-slate-700">
-                          {p.twelveSpirit ?? "미제공"}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                  <tr className="border-b border-slate-200 hover:bg-slate-50">
-                    <td className="px-4 py-3 text-xs font-semibold text-slate-600">12신살</td>
-                    {(Object.keys(pillars) as PillarKey[]).map((key) => {
-                      const p = pillars[key];
-                      return (
-                        <td key={`killer-${key}`} className="px-4 py-3 text-center text-xs text-slate-700">
-                          {p.twelveKiller ?? "없음"}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                  <tr className="hover:bg-slate-50">
-                    <td className="px-4 py-3 text-xs font-semibold text-slate-600">길성/흉성</td>
-                    {(Object.keys(pillars) as PillarKey[]).map((key) => {
-                      const p = pillars[key];
-                      return (
-                        <td key={`goodbad-${key}`} className="px-4 py-3 text-center text-[11px] text-slate-700">
-                          <div className="text-emerald-700">{p.auspicious ?? "길성 없음"}</div>
-                          <div className="text-rose-600">{p.inauspicious ?? "흉성 없음"}</div>
-                        </td>
-                      );
-                    })}
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div className="px-4 pb-4 pt-3 text-xs text-slate-600">
-              신강/신약은 내 기운의 강약을 뜻해요. 신강이면 스스로 주도적으로 움직이고, 신약이면 주변 도움과 균형 잡기가 더 중요합니다.
-              점수형 요약은 상세 사주풀이에서 확인할 수 있습니다.
-            </div>
-            <div className="px-4 pb-4">
-              <Button
-                size="sm"
-                variant="outline"
-                className="text-xs"
-                onClick={() => setShowGlossary((prev) => !prev)}
-              >
-                {showGlossary ? "용어 설명 닫기" : "용어 설명 보기"}
-              </Button>
-              {showGlossary && (
-                <ul className="mt-2 space-y-1 text-xs text-slate-700">
-                  <li>천간: 하늘 기운, 겉으로 드러난 성향</li>
-                  <li>지지: 땅의 기운, 뿌리/환경</li>
-                  <li>지장간: 지지 속에 숨은 보조 기운</li>
-                  <li>12운성: 삶의 단계 흐름(목욕·건록 등)</li>
-                  <li>12신살: 길흉을 나타내는 별자리(재살·장성살 등)</li>
-                  <li>길성/흉성: 도움을 주는 기운 / 주의해야 할 기운</li>
-                </ul>
-              )}
-            </div>
-            <Separator />
-            <div className="flex flex-wrap gap-2 px-4 pb-4 pt-3">
-              {hasKillerData ? (
-                (Object.keys(pillars) as PillarKey[]).map((key) => {
-                  const p = pillars[key];
-                  const killer = p.twelveKiller;
-                  const spirit = p.twelveSpirit;
-                  const ausp = p.auspicious;
-                  const inausp = p.inauspicious;
-                  return (
-                    <div
-                      key={`highlight-${key}`}
-                      className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs"
-                    >
-                      <span className="font-semibold text-slate-700">{PILLAR_LABEL[key]}</span>
-                      {killer && <span className="rounded-full bg-rose-50 px-2 py-0.5 text-rose-600">{killer}</span>}
-                      {spirit && <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700">{spirit}</span>}
-                      {ausp && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700">{ausp}</span>}
-                      {inausp && (
-                        <span className="rounded-full bg-amber-50 px-2 py-0.5 text-amber-700">{inausp}</span>
-                      )}
-                      {!killer && !spirit && !ausp && !inausp && (
-                        <span className="text-slate-500">표시할 데이터 없음</span>
-                      )}
-                    </div>
-                  );
-                })
-              ) : (
-                <span className="text-sm text-slate-700">
-                  아직 분석 데이터가 없어요. ‘상세 사주풀이’에서 요청하기.
-                </span>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-        {/* 내 성격과 재능 */}
-        <Card className="shadow-lg">
-          <CardHeader>
-            <CardTitle className="text-xl">🎯 내 성격과 재능</CardTitle>
-            <p className="mt-2 text-sm text-slate-600">사주로 본 나의 타고난 특성입니다</p>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="rounded-lg border-2 border-blue-200 bg-blue-50 p-4">
-                <div className="mb-2 flex items-center gap-2">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-500">
-                    <Users className="h-5 w-5 text-white" />
-                  </div>
-                  <div>
-                    <div className="font-bold text-blue-900">협력자형</div>
-                    <div className="text-xs text-blue-600">비견(나와 같은 기운)</div>
-                  </div>
-                </div>
-                <p className="text-sm text-blue-800">팀워크를 중시하고 동료들과 잘 협력합니다.</p>
-              </div>
-              <div className="rounded-lg border-2 border-emerald-200 bg-emerald-50 p-4">
-                <div className="mb-2 flex items-center gap-2">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500">
-                    <DollarSign className="h-5 w-5 text-white" />
-                  </div>
-                  <div>
-                    <div className="font-bold text-emerald-900">재물관리형</div>
-                    <div className="text-xs text-emerald-600">정재(재물운)</div>
-                  </div>
-                </div>
-                <p className="text-sm text-emerald-800">돈을 안정적으로 관리하고 저축을 잘합니다.</p>
-              </div>
-              <div className="rounded-lg border-2 border-purple-200 bg-purple-50 p-4">
-                <div className="mb-2 flex items-center gap-2">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-purple-500">
-                    <BookOpen className="h-5 w-5 text-white" />
-                  </div>
-                  <div>
-                    <div className="font-bold text-purple-900">창의력형</div>
-                    <div className="text-xs text-purple-600">편인(학습/연구)</div>
-                  </div>
-                </div>
-                <p className="text-sm text-purple-800">새로운 것을 배우고 창의적으로 생각합니다.</p>
-              </div>
-              <div className="rounded-lg border-2 border-amber-200 bg-amber-50 p-4">
-                <div className="mb-2 flex items-center gap-2">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-amber-500">
-                    <TrendingUp className="h-5 w-5 text-white" />
-                  </div>
-                  <div>
-                    <div className="font-bold text-amber-900">사업가형</div>
-                    <div className="text-xs text-amber-600">편재(사업/기회)</div>
-                  </div>
-                </div>
-                <p className="text-sm text-amber-800">사업 감각이 좋고 기회를 잘 포착합니다.</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      );
+    }
 
-        {/* 나에게 좋은 것들 */}
-        <Card className="shadow-lg bg-gradient-to-br from-violet-50 to-purple-50">
-          <CardHeader>
-            <CardTitle className="text-xl">✨ 나에게 좋은 것들</CardTitle>
-            <p className="mt-2 text-sm text-slate-600">이런 것들을 가까이하면 운이 좋아집니다</p>
-          </CardHeader>
-          <CardContent className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="rounded-lg bg-white p-4">
-              <div className="mb-3 flex items-center gap-2">
-                <Palette className="h-5 w-5 text-violet-600" />
-                <span className="font-semibold text-slate-900">행운의 색상</span>
-              </div>
-              <div className="flex gap-2">
-                <div className="h-12 w-12 rounded-full border-2 border-white shadow" style={{ backgroundColor: "#3B82F6" }} />
-                <div className="h-12 w-12 rounded-full border-2 border-white shadow" style={{ backgroundColor: "#10B981" }} />
-                <div className="h-12 w-12 rounded-full border-2 border-white shadow" style={{ backgroundColor: "#111827" }} />
-              </div>
-              <p className="mt-2 text-xs text-slate-600">수(水), 목(木) 계열 색상</p>
-            </div>
-            <div className="rounded-lg bg-white p-4">
-              <div className="mb-3 flex items-center gap-2">
-                <Compass className="h-5 w-5 text-violet-600" />
-                <span className="font-semibold text-slate-900">행운의 방향</span>
-              </div>
-              <div className="flex items-center justify-center">
-                <div className="text-4xl">🧭</div>
-              </div>
-              <p className="mt-2 text-center text-sm font-semibold text-slate-700">북쪽, 동쪽</p>
-              <p className="mt-1 text-center text-xs text-slate-600">중요한 일은 이 방향에서</p>
-            </div>
-            <div className="col-span-1 rounded-lg bg-white p-4 md:col-span-2">
-              <div className="mb-3 flex items-center gap-2">
-                <Briefcase className="h-5 w-5 text-violet-600" />
-                <span className="font-semibold text-slate-900">어울리는 직업</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Badge variant="secondary" className="bg-violet-100 text-violet-700">
-                  교육/강사
-                </Badge>
-                <Badge variant="secondary" className="bg-blue-100 text-blue-700">
-                  IT/기술
-                </Badge>
-                <Badge variant="secondary" className="bg-emerald-100 text-emerald-700">
-                  의료/건강
-                </Badge>
-                <Badge variant="secondary" className="bg-purple-100 text-purple-700">
-                  예술/디자인
-                </Badge>
-                <Badge variant="secondary" className="bg-amber-100 text-amber-700">
-                  경영/사업
-                </Badge>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        {/* 월별 흐름 */}
-        {/* 월별 흐름 */}
-        <Card className="shadow-lg">
-          <CardHeader>
-            <CardTitle className="text-xl">2024년 월별 운세 흐름</CardTitle>
-            <p className="mt-2 text-sm text-slate-600">이번 달이 어떤지 한눈에 확인하세요</p>
-          </CardHeader>
-          <CardContent>
-            <div className="mb-4 flex h-48 items-end justify-between gap-2">
-              {["1월", "2월", "3월", "4월", "5월", "6월", "7월", "8월", "9월", "10월", "11월", "12월"].map(
-                (month, idx) => {
-                  const score = monthScores[idx];
-                  const isCurrent = idx === new Date().getMonth();
-                  return (
-                    <div key={month} className="flex flex-1 flex-col items-center gap-1">
-                      <div
-                        className={cn(
-                          "w-full rounded-t-lg transition-all",
-                          isCurrent
-                            ? "bg-gradient-to-t from-violet-500 to-purple-500 shadow-lg"
-                            : "bg-gradient-to-t from-violet-200 to-purple-300",
-                        )}
-                        style={{ height: `${score}%` }}
-                      />
-                      <span className={cn("text-xs", isCurrent ? "font-bold text-violet-600" : "text-slate-600")}>
-                        {month}
-                      </span>
-                      {isCurrent && <span className="text-[11px] font-semibold text-violet-600">현재</span>}
-                    </div>
-                  );
-                },
-              )}
-            </div>
-            <div className="rounded-lg border-l-4 border-violet-500 bg-violet-50 p-4">
-              <p className="mb-1 text-sm font-semibold text-violet-900">이번 달 운세</p>
-              <p className="text-sm text-violet-800">이번 달은 새로운 기회가 많은 달입니다. 적극적으로 도전해보세요!</p>
-            </div>
-          </CardContent>
-        </Card>
+    const content = contentMap[tabKey] ?? { interpretations: [], solutions: [] };
+    const diagnosisList = content.interpretations;
+    const solutionsList = content.solutions;
+    const whyList = diagnosisList
+      .filter((item) => item.trust_level?.toLowerCase() === "high")
+      .slice(0, 3);
 
-        {/* 전문가용 상세 정보 */}
-        <Collapsible>
-          <Card className="shadow-lg">
-            <CollapsibleTrigger className="w-full">
-              <CardHeader className="flex cursor-pointer flex-row items-center justify-between hover:bg-slate-50">
-                <div>
-                  <CardTitle className="text-left text-lg">전문가용 상세 정보</CardTitle>
-                  <p className="mt-1 text-left text-sm text-slate-600">궁금하면 펼쳐보세요. 상담에서 더 깊게 안내합니다.</p>
-                </div>
-                <ChevronDown className="h-5 w-5 text-slate-400 transition-transform group-data-[state=open]:rotate-180" />
-              </CardHeader>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <CardContent className="space-y-6 border-t">
-                <div className="space-y-3">
-                  <h4 className="mb-1 flex items-center gap-2 font-semibold text-slate-900">
-                    <Calendar className="h-5 w-5 text-violet-600" />
-                    인생 운세 주기 (대운)
-                  </h4>
-                  <p className="text-sm text-slate-600">10~60세 핵심 구간을 먼저 보여드려요. 더 보고 싶으면 펼쳐주세요.</p>
-                  <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs font-semibold text-slate-700">
-                    {visibleBigLuck.map((item, idx) => (
-                      <div
-                        key={item.label}
-                        className={cn(
-                          "rounded-full border border-slate-200 bg-white px-3 py-1 shadow-sm",
-                          idx === 2 && "border-violet-200 bg-violet-50 text-violet-700",
-                        )}
-                      >
-                        {item.label} ({item.years})
-                      </div>
-                    ))}
-                    {!showLongFortune && (
-                      <button
-                        type="button"
-                        className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600 shadow-sm hover:bg-slate-100"
-                        onClick={() => setShowLongFortune(true)}
-                      >
-                        70세 이후 보기
-                      </button>
+    return (
+      <div className="grid gap-4 md:grid-cols-[1.2fr,1fr]">
+        <div className="space-y-3">
+          <p className="text-xs uppercase tracking-wide text-slate-300">진단 (Diagnosis)</p>
+          {diagnosisList.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-white/10 bg-slate-900/60 px-4 py-6 text-sm text-slate-400">
+              진단 데이터가 없습니다. 기본 요약을 참고해 주세요.
+            </div>
+          ) : (
+            diagnosisList.map((item) => (
+              <Card key={item.id} className="border border-white/10 bg-slate-900/70 backdrop-blur">
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-base text-slate-50">
+                      {tabKey === "summary" ? "오행 구조 및 기질 분석" : item.title ?? "제목 없음"}
+                    </CardTitle>
+                    {item.layer && (
+                      <Badge variant="outline" className="border-white/20 text-xs text-slate-400">
+                        {item.layer}
+                      </Badge>
                     )}
                   </div>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                    {visibleBigLuck.map((item, idx) => (
-                      <div
-                        key={`${item.label}-${item.ganji}`}
-                        className={cn(
-                          "rounded-lg bg-slate-50 p-3 text-center shadow-sm",
-                          idx === 2 && "border-2 border-violet-300 bg-violet-50",
-                        )}
-                      >
-                        <div className="mb-1 text-xs text-slate-600">
-                          {item.label} ({item.years})
-                        </div>
-                        <div className="font-semibold text-slate-900">{item.ganji}</div>
-                        <div className={cn("text-xs", item.color)}>{item.mood}</div>
-                      </div>
+                  <p className="text-sm text-slate-400">{item.content ?? "내용이 없습니다."}</p>
+                </CardHeader>
+              </Card>
+            ))
+          )}
+        </div>
+
+        <div className="space-y-3">
+          <p className="text-xs uppercase tracking-wide text-slate-300">처방 (Solution)</p>
+          {solutionsList.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-white/10 bg-slate-900/60 px-4 py-6 text-sm text-slate-400">
+              처방 데이터가 없습니다. 기본 행동 가이드를 참고해 주세요.
+            </div>
+          ) : (
+            solutionsList.map((item) => (
+              <Card key={item.id} className="border border-white/10 bg-slate-900/70 backdrop-blur">
+                <CardHeader className="flex flex-row items-start gap-3 space-y-0">
+                  <Checkbox
+                    id={`solution-${item.id}`}
+                    checked={solutionChecks[item.id] ?? false}
+                    onCheckedChange={(checked) => toggleSolutionCheck(item.id, !!checked)}
+                    className="mt-1"
+                  />
+                  <div className="flex-1 space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <CardTitle className="text-base text-slate-50">{item.title ?? "실행 아이템"}</CardTitle>
+                      {item.difficulty && (
+                        <Badge variant="secondary" className="bg-slate-800 text-xs text-slate-50">
+                          {item.difficulty}
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-400">{item.content ?? "내용이 없습니다."}</p>
+                    <div className="flex flex-wrap gap-2 text-xs text-slate-400">
+                      {item.time_required && (
+                        <span className="rounded-full bg-slate-800 px-2 py-1">소요 {item.time_required}</span>
+                      )}
+                      {item.severity && (
+                        <span className="rounded-full bg-slate-800 px-2 py-1">중요도 {item.severity}</span>
+                      )}
+                    </div>
+                  </div>
+                </CardHeader>
+              </Card>
+            ))
+          )}
+        </div>
+
+        <div className="col-span-full rounded-xl border border-white/10 bg-slate-900/70 p-2 backdrop-blur">
+          <Accordion type="single" collapsible>
+            <AccordionItem value="why">
+              <AccordionTrigger className="text-sm text-slate-50">
+                이 부분은 상담가가 신뢰도 높은 근거만 추려 보여드려요
+              </AccordionTrigger>
+              <AccordionContent>
+                {whyList.length === 0 ? (
+                  <p className="text-sm text-slate-400">신뢰도 높은 근거가 없습니다.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {whyList.map((item) => (
+                      <Card key={`why-${item.id}`} className="border border-white/10 bg-slate-900/80 backdrop-blur">
+                        <CardHeader className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <CardTitle className="text-sm text-slate-50">{item.title ?? "근거"}</CardTitle>
+                            <Badge className="bg-emerald-400/20 text-xs text-emerald-300">trust: high</Badge>
+                          </div>
+                          <p className="text-sm text-slate-400">{item.content ?? "내용이 없습니다."}</p>
+                        </CardHeader>
+                      </Card>
                     ))}
                   </div>
-                </div>
-
-                <div>
-                  <h4 className="mb-3 flex items-center gap-2 font-semibold text-slate-900">
-                    <BarChart3 className="h-5 w-5 text-violet-600" />
-                    오행 균형 상세
-                  </h4>
-                  <div className="rounded-lg bg-slate-50 p-4">
-                    <p className="text-sm leading-relaxed text-slate-700">
-                      수(水) 기운이 50%로 가장 강하고, 토(土) 기운이 25%로 그 다음입니다. 금(金)과 목(木) 기운이 부족하므로
-                      파란색, 초록색 옷이나 소품을 가까이하면 좋습니다.
-                    </p>
-                  </div>
-                </div>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="rounded-xl border border-violet-100 bg-violet-50 p-4 shadow-sm">
-                    <p className="mb-2 text-xs font-semibold text-violet-700">여기서 더 궁금해요</p>
-                    <p className="text-sm text-slate-800">
-                      커리어 방향, 투자 시기, 이직 타이밍 등 맞춤 질문을 남기면 상담사가 추가 풀이를 준비합니다.
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-amber-100 bg-amber-50 p-4 shadow-sm">
-                    <p className="mb-2 text-xs font-semibold text-amber-700">한 끗 차이 팁</p>
-                    <p className="text-sm text-slate-800">
-                      부족한 오행을 채우는 컬러·공간·습관을 조합해드립니다. 예: 파란색 소품+아침 물 한 컵 루틴.
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4 shadow-sm">
-                    <p className="mb-2 text-xs font-semibold text-emerald-700">다음 상담 준비</p>
-                    <ul className="space-y-1 text-sm text-slate-800">
-                      <li>- 최근 고민 1~2개 적어두기</li>
-                      <li>- 선택지(이직/투자/연애) 정리</li>
-                      <li>- 원하는 시점(달/분기) 표시</li>
-                    </ul>
-                  </div>
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-4 shadow-sm">
-                    <p className="mb-2 text-xs font-semibold text-indigo-700">전성기 타이머</p>
-                    <p className="text-2xl font-bold text-indigo-700">전성기까지 D-420일</p>
-                    <p className="mt-1 text-sm text-slate-700">30대 초반에 큰 기회가 옵니다. 지금부터 준비하세요.</p>
-                    <ul className="mt-2 space-y-1 text-xs text-slate-700">
-                      <li>- 올해 목표 3개만 집중</li>
-                      <li>- 멘토 1명 섭외</li>
-                      <li>- 불필요한 소비 줄이기</li>
-                    </ul>
-                  </div>
-                  <div className="rounded-xl border border-amber-100 bg-amber-50 p-4 shadow-sm">
-                    <p className="mb-2 text-xs font-semibold text-amber-700">맞춤 제안 받고 싶다면</p>
-                    <p className="text-sm text-slate-800">“직업/이직/투자/연애” 중 하나를 선택하면 상담사가 물어볼 핵심 질문 3개를 만들어드립니다.</p>
-                    <Button className="mt-3 h-10 w-full bg-gradient-to-r from-violet-600 to-purple-600 text-white hover:from-violet-700 hover:to-purple-700">
-                      맞춤 질문 3개 받기
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
-                    <p className="mb-2 text-xs font-semibold text-slate-700">실수 예방 체크리스트</p>
-                    <ul className="space-y-1 text-sm text-slate-800">
-                      <li>- 큰 계약 전에 하루 더 숙려</li>
-                      <li>- 가족·연인 의사 먼저 듣기</li>
-                      <li>- 잠 부족하면 결정 미루기</li>
-                      <li>- 한 달 예산 초과 시 소비 중단</li>
-                    </ul>
-                  </div>
-                  <div className="rounded-xl border border-violet-100 bg-white p-4 shadow-sm">
-                    <p className="mb-2 text-xs font-semibold text-violet-700">한 줄 Q&A 예시</p>
-                    <ul className="space-y-1 text-sm text-slate-800">
-                      <li>Q. 내년 이직, 언제가 좋을까요?</li>
-                      <li className="text-xs text-slate-600">→ 3~4월 추천, 7월 이후는 속도 조절</li>
-                      <li>Q. 올해 투자 방향은?</li>
-                      <li className="text-xs text-slate-600">→ 안전자산 비중 확대, 9월 이후 분할 접근</li>
-                      <li>Q. 연애운이 궁금해요.</li>
-                      <li className="text-xs text-slate-600">→ 8~10월 소개팅/소개 자리에 행운</li>
-                    </ul>
-                  </div>
-                </div>
-
-              </CardContent>
-            </CollapsibleContent>
-          </Card>
-        </Collapsible>
-
-        {/* 하단 액션 - 정리된 CTA */}
-        <section className="sticky bottom-0 z-10 bg-white/95 pb-6 pt-3 backdrop-blur print:static">
-          <div className="mx-auto max-w-5xl space-y-3">
-            <Button
-              size="lg"
-              className="h-14 w-full text-lg font-semibold bg-gradient-to-r from-violet-600 to-purple-600 text-white shadow-lg hover:from-violet-700 hover:to-purple-700"
-              onClick={() => handleAction("consult")}
-              disabled={ctaStatus === "pending"}
-            >
-              AI 상담하기
-            </Button>
-            <Button
-              size="lg"
-              variant="secondary"
-              className="h-14 w-full text-lg font-semibold bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-lg hover:from-pink-600 hover:to-rose-600"
-              onClick={() => handleAction("save")}
-              disabled={ctaStatus === "pending"}
-            >
-              저장하기
-            </Button>
-            {ctaMessage && (
-              <p
-                className={cn(
-                  "text-center text-sm",
-                  ctaStatus === "error" ? "text-rose-600" : "text-slate-700",
                 )}
-              >
-                {ctaMessage}
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+          {contentError && (
+            <p className="px-2 pb-1 pt-2 text-xs text-rose-400">{contentError}</p>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="relative min-h-screen bg-slate-950 text-slate-400">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(79,70,229,0.16),transparent_45%),radial-gradient(circle_at_80%_0%,rgba(56,189,248,0.12),transparent_35%)]" />
+      <main className="relative z-10 mx-auto max-w-6xl space-y-8 px-4 pb-24 pt-10">
+        <section className="grid gap-6 lg:grid-cols-[2fr,1.2fr]">
+          <Card className="relative overflow-hidden border border-white/10 bg-gradient-to-br from-slate-800/80 to-slate-900/80 shadow-2xl backdrop-blur-xl">
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-indigo-500/10 via-transparent to-blue-500/10" />
+            <CardHeader className="relative flex flex-col gap-4 pb-2">
+              <div className="flex items-center gap-3">
+                <Avatar className="h-12 w-12 border border-white/10">
+                  <AvatarFallback className="bg-indigo-500/30 text-sm font-semibold text-indigo-100">
+                    {name.slice(0, 2)}
+                  </AvatarFallback>
+                </Avatar>
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-indigo-300">Premium Insight</p>
+                  <h1 className="text-xl font-semibold text-slate-50">
+                    {name}님의 사주 결과
+                  </h1>
+                  <p className="text-sm text-slate-400">
+                    {birthDate} {birthTime} 출생 · {data.gender === "female" ? "여성" : "남성"} · {zodiacText}
+                  </p>
+                </div>
+              </div>
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-slate-300 backdrop-blur">
+                  <p className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-200">
+                    <Sparkles className="h-4 w-4 text-emerald-400" /> 가장 강한 오행
+                  </p>
+                  <p className="mt-1 text-xl font-semibold text-slate-50">
+                    {ELEMENT_LABEL[topElement[0]]} · {topElement[1]}%
+                  </p>
+                  <p className="text-xs text-slate-400">균형 지표: {strengthLabel}</p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-slate-300 backdrop-blur">
+                  <p className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-200">
+                    <Zap className="h-4 w-4 text-rose-400" /> 주인공 십성
+                  </p>
+                  <p className="mt-1 text-xl font-semibold text-slate-50">{tenGodOfDay.title}</p>
+                  <p className="text-xs text-slate-400">{tenGodOfDay.detail}</p>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-slate-300 backdrop-blur">
+                  <p className="flex items-center gap-2 text-xs uppercase tracking-wide text-slate-200">
+                    <BarChart3 className="h-4 w-4 text-blue-400" /> 인명강 지수
+                  </p>
+                  <p className="mt-1 text-xl font-semibold text-slate-50">{inmyeonggang} 점</p>
+                  <p className="text-xs text-slate-400">안정적 · 신뢰형</p>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="relative grid gap-6 md:grid-cols-[1.3fr,1fr]">
+              <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-5 shadow-inner backdrop-blur">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-slate-200">Element Balance</p>
+                    <h2 className="text-lg font-semibold text-slate-50">오행 밸런스 차트</h2>
+                  </div>
+                  <Badge className="bg-indigo-500/20 text-xs text-indigo-100 ring-1 ring-indigo-400/40">
+                    {topElement[0].toUpperCase()}
+                  </Badge>
+                </div>
+                <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-5">
+                  {(Object.entries(ohangScores) as [FiveElement, number][]).map(([key, score]) => {
+                    const tone = ELEMENT_THEME[key].tone;
+                    const style = { "--tone": tone } as CSSProperties;
+                    return (
+                      <div
+                        key={key}
+                        style={style}
+                        className="flex flex-col gap-2 rounded-xl border border-white/10 bg-slate-900/70 p-3 text-center text-slate-400 backdrop-blur"
+                      >
+                        <span className={cn("text-xs uppercase tracking-wide font-semibold", ELEMENT_THEME[key].text)}>
+                          {ELEMENT_LABEL[key]}
+                        </span>
+                        <div className="relative h-20 overflow-hidden rounded-lg bg-slate-900/80">
+                          <div
+                            className="absolute inset-x-3 top-2 bottom-2 flex items-end justify-center"
+                            aria-hidden
+                          >
+                            <div
+                              className="w-full rounded-full shadow-[0_10px_25px_-10px_var(--tone)] transition-all"
+                              style={{ height: `${clamp(score)}%`, backgroundColor: tone }}
+                              data-slot="element-bar"
+                            />
+                          </div>
+                        </div>
+                        <span className="text-sm font-semibold text-slate-50">{score}%</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-white/10 bg-slate-900/60 p-6 shadow-inner backdrop-blur">
+                <DonutChart label="TOP ELEMENT" value={topElement[1]} tone={topElementTheme.tone} />
+                <div className="text-center text-sm text-slate-400">
+                  <p className="text-slate-50">균형 지표 {strengthLabel}</p>
+                  <p>{tenGodSummary}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="overflow-hidden border border-white/10 bg-slate-900/60 shadow-2xl backdrop-blur-xl">
+            <CardHeader>
+              <p className="text-xs uppercase tracking-wide text-indigo-300">Hero Insight</p>
+              <CardTitle className="text-xl text-slate-50">프리미엄 리포트 요약</CardTitle>
+              <p className="text-sm text-slate-400">
+                가장 강한 오행과 주인 십성을 기반으로 오늘 바로 실행할 수 있는 한 줄 조언을 제공합니다.
               </p>
-            )}
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant="outline" size="sm" className="h-12">
-                <Share2 className="mr-1 h-4 w-4" />
-                친구에게 공유
-              </Button>
-              <Button variant="outline" size="sm" className="h-12">
-                <Printer className="mr-1 h-4 w-4" />
-                인쇄/저장
-              </Button>
-            </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="rounded-xl border border-white/10 bg-slate-900/70 px-4 py-3 text-sm text-slate-400">
+                <p className="text-xs uppercase tracking-wide text-indigo-300">한 줄 요약</p>
+                <p className="mt-1 text-slate-50">
+                  {ELEMENT_LABEL[topElement[0]]} 기운이 두드러지고, {tenGodOfDay.title} 성향이 강합니다. 팀과의 협업 속에서
+                  기회가 자연스럽게 들어오니, 오늘은 연대와 연결에 투자해보세요.
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-sm text-slate-400">
+                <div className="rounded-lg border border-white/10 bg-slate-900/70 px-3 py-3">
+                  <p className="text-xs uppercase tracking-wide text-indigo-300/80">추천 액션</p>
+                  <p className="mt-1 text-slate-50">새로운 협업 제안에 응답하기</p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-slate-900/70 px-3 py-3">
+                  <p className="text-xs uppercase tracking-wide text-rose-300">포커스 시간</p>
+                  <p className="mt-1 text-slate-50">오전 9시~11시, 집중도 상승 구간</p>
+                </div>
+              </div>
+                <div className="flex gap-3">
+                  <Button
+                    className="flex-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-blue-500 text-white shadow-[0_15px_45px_rgba(99,102,241,0.35)] ring-2 ring-indigo-400/40 transition hover:translate-y-[-1px] hover:shadow-[0_18px_55px_rgba(99,102,241,0.45)]"
+                    onClick={() => handleAction("consult")}
+                    disabled={ctaStatus === "pending"}
+                  >
+                    AI 상담으로 이어보기
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    className="flex-1 bg-gradient-to-r from-emerald-500 to-cyan-500 text-white shadow-[0_15px_45px_rgba(16,185,129,0.35)] ring-2 ring-emerald-300/40 transition hover:translate-y-[-1px] hover:shadow-[0_18px_55px_rgba(16,185,129,0.45)]"
+                    onClick={() => handleAction("save")}
+                    disabled={ctaStatus === "pending"}
+                  >
+                    리포트 저장
+                  </Button>
+              </div>
+              {ctaMessage && (
+                <p
+                  className={cn(
+                    "text-center text-xs",
+                    ctaStatus === "error" ? "text-rose-400" : "text-slate-400",
+                  )}
+                >
+                  {ctaMessage}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+          <p className="text-xs uppercase tracking-wide text-slate-300">내 사주팔자</p>
+          <h2 className="text-lg font-semibold text-slate-50">연 · 월 · 일 · 시주 카드</h2>
+          <p className="text-sm text-slate-400">한자는 작게, 오행 컬러로 직관적으로 표시합니다.</p>
+        </div>
+      </div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {(Object.keys(pillars) as PillarKey[]).map((key) => (
+              <PillarCard key={key} pillarKey={key} pillar={pillars[key]} />
+            ))}
           </div>
         </section>
+
+        <section className="rounded-2xl border border-white/10 bg-slate-900/50 p-4 shadow-2xl backdrop-blur-xl">
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)}>
+            <TabsList className="w-full flex-wrap justify-between gap-2 rounded-xl border border-white/10 bg-slate-950/80 p-3 shadow-inner">
+              <TabsTrigger value="summary" className="flex-1 min-w-[120px] rounded-lg px-4 py-3 text-sm font-semibold text-slate-300 ring-1 ring-transparent transition data-[state=active]:bg-slate-800 data-[state=active]:text-white data-[state=active]:shadow-[0_10px_30px_rgba(99,102,241,0.25)] data-[state=active]:ring-indigo-400/40">
+                종합
+              </TabsTrigger>
+              <TabsTrigger value="love" className="flex-1 min-w-[120px] rounded-lg px-4 py-3 text-sm font-semibold text-slate-300 ring-1 ring-transparent transition data-[state=active]:bg-slate-800 data-[state=active]:text-white data-[state=active]:shadow-[0_10px_30px_rgba(236,72,153,0.2)] data-[state=active]:ring-rose-400/40">
+                연애
+              </TabsTrigger>
+              <TabsTrigger value="career" className="flex-1 min-w-[120px] rounded-lg px-4 py-3 text-sm font-semibold text-slate-300 ring-1 ring-transparent transition data-[state=active]:bg-slate-800 data-[state=active]:text-white data-[state=active]:shadow-[0_10px_30px_rgba(16,185,129,0.2)] data-[state=active]:ring-emerald-400/40">
+                직업
+              </TabsTrigger>
+              <TabsTrigger value="wealth" className="flex-1 min-w-[120px] rounded-lg px-4 py-3 text-sm font-semibold text-slate-300 ring-1 ring-transparent transition data-[state=active]:bg-slate-800 data-[state=active]:text-white data-[state=active]:shadow-[0_10px_30px_rgba(251,191,36,0.25)] data-[state=active]:ring-amber-300/40">
+                재물
+              </TabsTrigger>
+              <TabsTrigger value="health" className="flex-1 min-w-[120px] rounded-lg px-4 py-3 text-sm font-semibold text-slate-300 ring-1 ring-transparent transition data-[state=active]:bg-slate-800 data-[state=active]:text-white data-[state=active]:shadow-[0_10px_30px_rgba(96,165,250,0.25)] data-[state=active]:ring-blue-400/40">
+                건강
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="summary" className="pt-4">
+              {renderTabContent("summary")}
+            </TabsContent>
+
+            <TabsContent value="love" className="pt-4">
+              {renderTabContent("love")}
+            </TabsContent>
+
+            <TabsContent value="career" className="pt-4">
+              {renderTabContent("career")}
+            </TabsContent>
+
+            <TabsContent value="wealth" className="pt-4">
+              {renderTabContent("wealth")}
+            </TabsContent>
+
+            <TabsContent value="health" className="pt-4">
+              {renderTabContent("health")}
+            </TabsContent>
+          </Tabs>
+        </section>
       </main>
+
+      <div className="pointer-events-none fixed inset-0 z-0 bg-gradient-to-b from-transparent via-indigo-500/10 to-slate-950" />
+
+      <div className="fixed bottom-6 right-6 z-20 flex items-end gap-3">
+        <div className="pointer-events-none rounded-2xl border border-white/10 bg-slate-800/90 px-4 py-3 text-sm text-slate-400 shadow-2xl backdrop-blur">
+          <div className="flex items-center gap-2 text-slate-50">
+            <MessageCircle className="h-4 w-4 text-indigo-300" />
+            <span>추천 질문</span>
+          </div>
+          <p className="mt-1 text-slate-50">
+            {typedText}
+            <span className="animate-pulse text-indigo-300">|</span>
+          </p>
+        </div>
+        <Button
+          size="lg"
+          className="h-14 w-14 rounded-full bg-indigo-500 text-white shadow-lg shadow-indigo-500/50 hover:scale-105"
+          onClick={() => router.push("/chat")}
+        >
+          <Sparkles className="h-6 w-6" />
+        </Button>
+      </div>
     </div>
   );
 };
