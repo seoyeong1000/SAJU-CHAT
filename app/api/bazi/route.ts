@@ -193,7 +193,7 @@ export const POST = async (req: Request) => {
             }
             return { minutes: calculateEoT(julianDayUTC), source: "approx" as const };
           })()
-        : { minutes: null, source: null as const };
+        : { minutes: null, source: null };
 
     const totalOffsetMinutes =
       usedTrueSolarTime && longitudeOffsetMin !== null

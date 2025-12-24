@@ -72,7 +72,7 @@ function calculateElementScores(baziResult: BaziResult): Record<string, number> 
     사: "fire",
     오: "fire",
     미: "earth",
-    신: "metal",
+    // 申(신)은 천간 辛(신)과 동일 키라 중복 제거 - 둘 다 metal
     유: "metal",
     술: "earth",
     해: "water",

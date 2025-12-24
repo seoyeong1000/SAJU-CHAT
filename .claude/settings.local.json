@@ -1,4 +1,18 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(npx tsc:*)",
+      "Bash(curl:*)",
+      "WebFetch(domain:xn--pro-9j6n.forceteller.com)",
+      "WebSearch",
+      "Bash(pnpm build:*)",
+      "Bash(taskkill:*)",
+      "Bash(powershell -Command:*)",
+      "WebFetch(domain:pro.forceteller.com)",
+      "Bash(pnpm dlx:*)"
+    ]
+  },
   "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "supabase"

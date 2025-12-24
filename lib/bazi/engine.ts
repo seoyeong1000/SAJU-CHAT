@@ -28,6 +28,19 @@ export type SwissEngine = {
   cleanup?: () => Promise<void> | void;
 };
 
+/**
+ * WASM 에러 메시지에서 한글 문자열 깨짐 방지를 위한 안전한 에러 메시지 생성
+ * Rust WASM은 UTF-8 바이트 경계를 고려하지 않고 문자열을 자를 수 있어 패닉 발생 가능
+ */
+function sanitizeErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    // ASCII만 포함된 안전한 에러 메시지 생성
+    const safeMessage = error.message.replace(/[^\x00-\x7F]/g, '?');
+    return `SwissEph Error: ${safeMessage}`;
+  }
+  return 'SwissEph Error: Unknown error occurred';
+}
+
 const EPHE_PATH = path.join(process.cwd(), "public", "ephe");
 const NORMALIZED_EPHE_PATH = EPHE_PATH.replace(/\\/g, "/");
 
@@ -49,25 +62,55 @@ const toWasmResult = (result: ArrayLike<number>): SwissCalcResult => {
 };
 
 const loadWasmEngine = async (): Promise<SwissEngine> => {
-  const SwissEph: SwissWasmCtor = (await import("swisseph-wasm")).default;
-  const swe = new SwissEph() as SwissWasmInstance;
+  try {
+    const SwissEph: SwissWasmCtor = (await import("swisseph-wasm")).default;
+    const swe = new SwissEph() as SwissWasmInstance;
 
-  await swe.initSwissEph();
-  swe.set_ephe_path(NORMALIZED_EPHE_PATH);
+    await swe.initSwissEph();
+    (swe as unknown as Record<string, (...args: unknown[]) => unknown>).set_ephe_path?.(NORMALIZED_EPHE_PATH);
 
-  return {
-    source: "swisseph-wasm",
-    swe_julday: (year, month, day, utHour) => swe.julday(year, month, day, utHour),
-    swe_calc_ut: (julianDay, body, flags) => toWasmResult(swe.calc_ut(julianDay, body, flags)),
-    swe_set_ephe_path: swe.set_ephe_path.bind(swe),
-    swe_time_equ: () => null, // wasm 빌드는 swe_time_equ 결과를 제공하지 않음
-    constants: {
-      SE_SUN: swe.SE_SUN,
-      SEFLG_SWIEPH: swe.SEFLG_SWIEPH,
-      SE_GREG_CAL: swe.SE_GREG_CAL,
-    },
-    cleanup: typeof swe.close === "function" ? () => swe.close() : undefined,
-  };
+    // WASM 호출을 래핑하여 에러 처리
+    const safeCalcUt = (julianDay: number, body: number, flags: number): SwissCalcResult => {
+      try {
+        return toWasmResult(swe.calc_ut(julianDay, body, flags));
+      } catch (err) {
+        console.error('[SwissEph] calc_ut error:', sanitizeErrorMessage(err));
+        throw new Error(sanitizeErrorMessage(err));
+      }
+    };
+
+    const safeJulday = (year: number, month: number, day: number, utHour: number): number => {
+      try {
+        return swe.julday(year, month, day, utHour);
+      } catch (err) {
+        console.error('[SwissEph] julday error:', sanitizeErrorMessage(err));
+        throw new Error(sanitizeErrorMessage(err));
+      }
+    };
+
+    return {
+      source: "swisseph-wasm",
+      swe_julday: safeJulday,
+      swe_calc_ut: safeCalcUt,
+      swe_set_ephe_path: (p: string) => {
+        try {
+          (swe as unknown as Record<string, (...args: unknown[]) => unknown>).set_ephe_path?.(p);
+        } catch (err) {
+          console.error('[SwissEph] set_ephe_path error:', sanitizeErrorMessage(err));
+        }
+      },
+      swe_time_equ: () => null, // wasm 빌드는 swe_time_equ 결과를 제공하지 않음
+      constants: {
+        SE_SUN: swe.SE_SUN,
+        SEFLG_SWIEPH: swe.SEFLG_SWIEPH,
+        SE_GREG_CAL: swe.SE_GREG_CAL,
+      },
+      cleanup: typeof swe.close === "function" ? () => swe.close() : undefined,
+    };
+  } catch (err) {
+    console.error('[SwissEph] Engine initialization failed:', sanitizeErrorMessage(err));
+    throw new Error(sanitizeErrorMessage(err));
+  }
 };
 
 const loadEngine = async (): Promise<SwissEngine> => {

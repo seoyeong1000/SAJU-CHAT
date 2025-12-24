@@ -111,15 +111,14 @@ export default async function MyPage() {
     Promise.resolve(createClerkSupabaseClient()),
   ]);
 
-  const query =
-    (await supabase
-      .from("saved_sajus")
-      .select("id, clerk_id, name, birth_date, relationship, day_pillar, payload")
-      .eq("clerk_id", userId)
-      .order("created_at", { ascending: false })) ?? {};
+  const query = await supabase
+    .from("saved_sajus")
+    .select("id, clerk_id, name, birth_date, relationship, day_pillar, payload")
+    .eq("clerk_id", userId)
+    .order("created_at", { ascending: false });
 
-  const savedList: SavedSajuRow[] = Array.isArray(query.data) ? query.data : [];
-  const error = query.error ?? null;
+  const savedList: SavedSajuRow[] = Array.isArray(query?.data) ? query.data : [];
+  const error = query?.error ?? null;
 
   const displayName = user?.fullName ?? user?.username ?? "나의 프로필";
   const email =

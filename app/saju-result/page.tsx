@@ -2,7 +2,7 @@
 
 import { useAuth, useClerk } from "@clerk/nextjs";
 import type { CSSProperties } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -455,7 +455,7 @@ const PillarCard = ({ pillarKey, pillar }: { pillarKey: PillarKey; pillar: Pilla
 
 const typingPhrases = ["저랑 잘 맞을까요?", "올해 연애운이 궁금해요", "커리어 전성기, 언제일까요?"];
 
-const SajuResultPage = () => {
+const SajuResultPageContent = () => {
   const searchParams = useSearchParams();
   const dataParam = searchParams.get("data");
   const supabase = useClerkSupabaseClient();
@@ -1050,6 +1050,18 @@ const SajuResultPage = () => {
         </Button>
       </div>
     </div>
+  );
+};
+
+const SajuResultPage = () => {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center bg-slate-950">
+        <div className="text-slate-400">로딩 중...</div>
+      </div>
+    }>
+      <SajuResultPageContent />
+    </Suspense>
   );
 };
 

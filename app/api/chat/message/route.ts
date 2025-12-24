@@ -140,7 +140,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const body: ChatMessageRequest = parsed.data;
+    const body = parsed.data as ChatMessageRequest;
     const supabase = getServiceRoleClient();
 
     console.log(`📋 chart_id: ${body.chart_id}, session_id: ${body.session_id}`);

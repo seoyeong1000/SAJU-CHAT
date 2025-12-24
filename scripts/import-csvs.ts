@@ -4,7 +4,7 @@ import path from "path";
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
-import { Database } from "../database.types";
+import { Database, Json } from "../database.types";
 
 type DbClient = SupabaseClient<Database>;
 type RawCsvRow = Record<string, string>;
@@ -112,10 +112,10 @@ function emptyToNull(value: string | undefined): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
-function safeJsonParse(value: string | undefined): unknown {
+function safeJsonParse(value: string | undefined): Json | null {
   if (!value || value.trim() === "") return null;
   try {
-    return JSON.parse(value);
+    return JSON.parse(value) as Json;
   } catch (error) {
     console.warn("Failed to parse JSON value, storing null instead:", value);
     console.warn(error);
