@@ -1,0 +1,2 @@
+﻿id,logic_key,persona_id,use_case,variant_type,text,tone_note,priority,lang,is_active,version,source_name,source_ref,access_tier,is_marketing_free,safety_tags
+INTP_BING_CHEN_HOOK_01,ganji.daily.bing_chen,INTP,daily_one_liner,,"결정을 내린 뒤에는, 그 옆에 사람들의 감정도 함께 적어보자.",warm_counselor,1.0,ko,True,1.0,persona_v1,삼명통회 성정론; 마인드셋 심리학,both,True,[]

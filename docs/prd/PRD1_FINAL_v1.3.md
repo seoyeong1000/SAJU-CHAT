@@ -1,0 +1,1524 @@
+# PRD1 FINAL — 만세력(명식) 계산 엔진
+
+- 버전: v1.3
+- 최종 업데이트: 2025-12-21 (Asia/Seoul)
+- 상태: FINAL
+
+## 이번 통합 업그레이드에서 “패치로만 있던 내용”을 본문에 흡수한 항목
+- 공통(NFR): Legal/SEO/OG/Sentry/Support + 보안/레이트리밋/멱등/로그/백업/마이그레이션/비용통제
+- DB Source of Truth: entitlement-차트 바인딩 1:1, 리포트 스냅샷 불변, 차트 삭제 금지(Lock A), 생성 멱등/복구(Lock B), 채팅 차감 원자화 RPC, 장부(credit_logs) 유니크
+- Seed/ETL: `npm run seed` + 파일별 매핑 규격 + 멱등/검증/청크 처리
+- 환경변수: `.env.example` 강제
+
+## 공통 필수 요구사항(이 PRD에 반드시 적용)
+> 아래 규칙은 “기능”이 아니라 “서비스가 운영 가능한지”를 결정하는 **강제 스펙**입니다.
+
+1) **클라이언트 → n8n 직결 금지**: 모든 호출은 Next.js Gateway를 통해서만 수행  
+2) **유료 필터링/권한 판정은 서버가 진실**: 프론트에서 숨김으로 때우지 않음  
+3) **멱등성/원자성**: 결제/리포트 생성/상담 차감은 중복 실행돼도 1번만 처리  
+4) **관측 가능성**: request_id + Sentry + 운영 로그 표준  
+5) **Seed/환경변수**: 빈 DB에 데이터/키 넣는 절차가 없으면 배포 불가
+
+- 상세 규격은 문서 하단 부록(NFR/DB/Seed)을 그대로 따른다.
+
+---
+
+📘 Bazi Ephemeris Engine PRD – Final v2.2
+0. 문서 정보
+
+프로젝트명: Bazi Ephemeris Engine (만세력 계산 코어)
+
+버전: v2.2 Final
+
+작성자: PM/CTO
+
+대상: 백엔드 개발자, 인프라 엔지니어, AI 에이전트(Cursor/Codex)
+
+목표:
+
+Swiss Ephemeris 기반 정밀 만세력 엔진을 Next.js + Node 환경에서 안정적으로 돌린다.
+
+윈도우 개발 환경 + 리눅스(AWS/Railway) 배포 환경 모두 동일 코드로 동작하게 한다.
+
+개발 단계에서는 RLS 비활성화, 운영 전환 시에만 RLS를 켜는 전략을 명확히 한다.
+
+이 PRD는 **“만세력/천문 계산 엔진”**만 다룹니다.
+사주 풀이(통변) 룰엔진, 사주 채팅봇은 별도 PRD(v1.x, v3.x)에서 정의.
+
+1. 설계 방향 요약 (Architecture Summary)
+1.1 기존 안 vs 최종 안
+
+❌ 기존 안:
+
+Windows 전용 swetest.exe 바이너리를 child_process로 호출.
+
+C 코드를 TypeScript로 직접 포팅 시도.
+
+✅ 최종 안:
+
+NPM Swiss Ephemeris 라이브러리(Node 바인딩/wasm)를 사용.
+
+OS 독립적으로 동작하도록 설계 (Windows Dev ↔ Linux Prod 동일 코드).
+
+1.2 기술 스택
+
+런타임: Node.js (Next.js 15 App Router, API Route)
+
+만세력 엔진:
+
+1순위: swisseph-v2
+ 
+packages.ecosyste.ms
+
+2순위(윈도우 빌드 실패 시): swisseph-wasm 
+packages.ecosyste.ms
+
+보조 엔진(백업): date-chinese (단순 간지 계산용)
+
+DB: Supabase(PostgreSQL)
+
+인증/연동: Clerk ↔ Supabase (이 PRD에서는 세부 인증 로직은 범위 밖)
+
+1.3 금지 사항 (Hard NO)
+
+❌ Swiss C 코드를 TypeScript로 직접 포팅(C → TS 변환)
+→ 정밀도 망가질 위험이 크므로 절대 금지.
+
+❌ .exe 바이너리 업로드 후 child_process.exec로 호출
+→ 리눅스 컨테이너/서버리스에서 깨질 가능성이 큼.
+
+✅ 반드시 NPM 패키지(swisseph-v2 / swisseph-wasm) 를 사용해 호출할 것.
+
+2. Cursor / Codex용 개발 지시문
+
+이 섹션은 그대로 복붙해서 Cursor에게 주는 용도입니다.
+
+2.1 방향 전환 설명
+PRD에는 원래 Windows용 EXE(swetest.exe)를 child_process로 실행하는 방식이 있었는데,
+배포 환경이 AWS나 Railway 같은 리눅스/컨테이너가 될 것이기 때문에
+이제는 .exe 파일을 직접 실행하지 않고,
+
+Node.js 용 Swiss Ephemeris 라이브러리를 npm으로 설치해서 사용하는 방식으로 변경한다.
+
+2.2 Cursor에 줄 프롬프트 예시 ① (엔진 세팅)
+생각해보니 나중에 AWS나 Railway(리눅스 환경)에 배포해야 해서,
+`.exe` 파일을 직접 실행하는 방식은 관리가 어려울 것 같아.
+
+대신, Node.js용 Swiss Ephemeris 라이브러리(`swisseph-v2` 우선, 안되면 `swisseph-wasm`)를
+npm으로 설치해서 사용하는 방식으로 구현해줘.
+
+1. `package.json`에 `swisseph-v2`를 추가해줘.
+   - 만약 내 개발 PC(Windows)에서 native 빌드가 실패하면, 자동으로 `swisseph-wasm` 버전으로 대체해줘.
+
+2. `lib/bazi/engine.ts` 파일을 만들어서,
+   - `swisseph-v2` (또는 fallback으로 `swisseph-wasm`)를 import해서 사용하는 구조로 작성해줘.
+   - 절대로 `child_process`로 exe를 부르지 말고, 라이브러리 함수를 직접 호출하는 방식으로 만들어줘.
+
+3. Ephemeris 데이터 파일(ephe)은 프로젝트 내의 `public/ephe` 폴더에 둘 예정이야.
+   - 라이브러리 초기화 시 `swe_set_ephe_path` 같은 함수를 사용해서
+     이 경로를 바라보도록 설정해줘.
+
+이렇게 하면 Windows 개발환경과 Linux 배포환경 모두에서
+코드 수정 없이 동일하게 동작할 수 있게 해줘.
+
+2.3 Cursor에 줄 프롬프트 예시 ② (테스트 함수)
+`swisseph-v2`를 잘 설치했다면, 다음 작업을 해줘.
+
+1. 터미널에서 `pnpm add swisseph-v2 date-chinese` 를 실행하는 스크립트/명령어를 README나 docs에 추가해줘.
+
+2. 설치가 끝났다고 가정하고,
+   `lib/bazi/engine.ts` 안에 아래 내용을 포함한 테스트 함수를 만들어줘.
+
+   - `swisseph.swe_julday` 를 사용해서
+     2024-02-04 12:00:00 UTC 의 율리우스일(Julian day)을 계산하는 예제
+   - `swisseph.swe_set_ephe_path(process.cwd() + "/public/ephe")` 로 경로를 세팅하는 코드
+   - 계산 결과를 반환하는 `testSwissConnection()` 같은 함수
+
+3. 이 함수는 나중에 `/api/bazi-test` 같은 라우트에서 호출할 수 있게
+   export 해줘.
+
+3. 입력/출력 스펙 (API Spec)
+3.1 Endpoint
+
+URL: POST /api/bazi
+
+역할:
+
+사용자가 입력한 출생 시각 + 장소 정보를 받아
+
+월주/일주/시주를 포함한 **원시 천문 데이터(raw_chart)**를 반환한다.
+
+3.2 요청 스키마 (Request JSON)
+{
+  "localWallTime": "2024-02-04T16:30:00",   // 필수: 사용자가 본 벽시계 시각 (초까지 허용)
+  "tzid": "Asia/Seoul",                     // 필수: IANA Time Zone
+  "lon": 126.9780,                          // 선택: 경도(+동경). 없으면 진태양시 계산 X
+  "lat": 37.5665,                           // 선택: 위도(+북위). v1에서는 메타로만 사용
+  "options": {
+    "useTrueSolarTime": true,               // 진태양시 적용 여부 (기본 true)
+    "zishiSplit": "traditional",            // 'traditional' | 'modern'
+    "fallbackStrategy": "allowApprox"       // 'allowApprox' | 'strict'
+  }
+}
+
+
+주의:
+
+localWallTime은 항상 사용자의 “지역 시간” 기준.
+
+UTC로 들어오는 값이 아님. 변환은 서버에서 tzid를 사용해 처리.
+
+3.3 응답 스키마 (Response JSON, 개요)
+{
+  "yearPillar": "갑자",
+  "monthPillar": "을축",
+  "dayPillar": "무인",
+  "hourPillar": "경자",
+  "raw": {
+    "julianDayUTC": 2460345.5,
+    "sunLongitude": 315.1234
+  },
+  "flags": {
+    "usedTrueSolarTime": true,
+    "usedFallbackEngine": false,
+    "hourUnknown": false,
+    "locationUnknown": false
+  },
+  "meta": {
+    "engine": "swiss-v2 | swisseph-wasm | date-chinese",
+    "note": "월지=태양황경(절기), 시주=진태양시(경도+EoT)",
+    "debug": {
+      "tzid": "Asia/Seoul",
+      "tzOffsetMin": 540,
+      "lon": 126.978,
+      "localWallISO": "2024-02-04T16:30:00",
+      "utcISO": "2024-02-04T07:30:00Z",
+      "tstLocal": "2024-02-04T16:38:12",
+      "eotMin": -1.3
+    }
+  }
+}
+
+4. 로직 상세 (월주/시주/진태양시)
+4.1 시간대/UTC 변환
+
+localWallTime + tzid → UTC 변환
+
+date-fns-tz 또는 luxon 계열 라이브러리 사용 (내부 구현 선택).
+
+역사적 DST(썸머타임)는 tzid가 알아서 처리.
+
+UTC 시각 → swisseph의 swe_julday/swe_calc_ut에 전달.
+
+4.2 월주(月柱) 계산 (태양 황경 기반)
+
+swisseph.swe_calc_ut(julianDayUTC, SE_SUN, ...)로 태양 황경 λ☉ 계산.
+
+315°를 입춘(寅월)의 시작점으로 두고, 30° 구간으로 월지 판정:
+
+[315°, 345°) → 寅
+
+[345°, 15°) → 卯
+
+[15°, 45°) → 辰
+
+…
+
+경계 처리:
+
+절입 시각을 분/초 단위까지 계산하고,
+
+출생 시각이 절입 시각 이후이면 새 달로 판정.
+
+4.3 시주(時柱) & 자시 정책
+
+진태양시(True Solar Time) 계산:
+
+lon이 있으면:
+
+표준시 기준에서 경도 보정 + EoT(시방정식)를 더해 TST 산출.
+
+lon이 없으면:
+
+flags.usedTrueSolarTime = false로 두고, 표준시 기준으로만 시주 계산.
+
+zishiSplit 옵션:
+
+traditional (기본값)
+
+TST 기준 23:00부터 다음 날 일진을 적용.
+
+23:00~01:00 = 자시, 일주는 다음 날.
+
+modern
+
+23:00~24:00 = 야자시 (일주는 오늘, 시지는 자시)
+
+00:00~01:00 = 조자시 (일주는 내일, 시지는 자시)
+
+5. 예외 처리 & Fallback 전략
+5.1 Swiss 엔진 실패 시
+
+swisseph-v2 로딩 실패, ephe 파일 누락, 계산 오류 등 발생 시:
+
+fallbackStrategy === "allowApprox"이면:
+
+date-chinese 라이브러리로 월주/일주/시주 단순 계산.
+
+flags.usedFallbackEngine = true
+
+meta.engine = "date-chinese"
+
+meta.debug.error 필드에 Swiss 에러 메시지 기록.
+
+fallbackStrategy === "strict"이면:
+
+HTTP 500 + 에러 메시지 반환.
+
+DB에 에러 로그 남김.
+
+5.2 생시/장소 미상
+
+생시 모름:
+
+프론트에서 시간 입력을 null/unknown으로 보낼 수 있게 하고,
+
+백엔드에서 hourPillar = null, flags.hourUnknown = true.
+
+장소 모름:
+
+lon, lat 누락 → flags.locationUnknown = true,
+
+진태양시(TST)는 계산하지 않고, 표준시로만 시주 계산.
+
+6. DB 설계 & RLS 정책
+6.1 테이블 개요
+
+Dev 단계에서는 RLS 전부 비활성화. Prod 전환 시 별도 마이그레이션으로 활성화.
+
+astro_request
+
+id (uuid, pk)
+
+input_json (jsonb)
+
+created_at (timestamptz)
+
+astro_result
+
+id (uuid, pk)
+
+request_id (uuid, fk → astro_request.id)
+
+output_json (jsonb)
+
+engine_type (text) — 'swiss-v2' | 'swisseph-wasm' | 'date-chinese'
+
+created_at (timestamptz)
+
+astro_error_log
+
+id (uuid, pk)
+
+request_id (nullable, fk)
+
+error_message (text)
+
+stack (text)
+
+created_at (timestamptz)
+
+6.2 인덱스
+
+astro_request (created_at DESC)
+
+astro_result (request_id)
+
+필요 시 astro_result (created_at DESC) 추가
+
+6.3 RLS 전략
+
+Dev / Stage:
+
+ALTER TABLE ... DISABLE ROW LEVEL SECURITY;
+
+개발 편의를 위해 anon key로도 read/write 가능.
+
+Prod:
+
+owner_id 컬럼 추가 후,
+owner_id = auth.jwt()->>'sub' 기반 RLS 정책 별도 PRD/마이그레이션에서 정의.
+
+7. 설치 & 개발 가이드
+7.1 패키지 설치
+# Swiss Ephemeris & 보조 엔진
+pnpm add swisseph-v2 date-chinese
+
+# Windows에서 빌드가 실패하면 (node-gyp 에러 등)
+pnpm add swisseph-wasm
+
+7.2 Ephemeris 데이터 파일
+
+Swiss Ephemeris 공식 사이트에서 ephe 파일 다운
+
+sepl_18.se1, semo_18.se1, seas_18.se1, sefstars.se1 등
+
+프로젝트 루트에 public/ephe/ 생성 후 복사.
+
+초기화 코드 (예시):
+
+import swe from "swisseph-v2";
+// 또는 import swe from "swisseph-wasm";
+
+swe.swe_set_ephe_path(process.cwd() + "/public/ephe");
+
+7.3 환경 변수 예시
+ENGINE_MODE=swiss          # swiss | date-chinese (fallback 엔진 선택)
+FALLBACK_STRATEGY=allowApprox
+
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...  # Dev에선 거의 사용 X, Prod에서 배치/관리용
+
+8. 테스트 & 검증
+8.1 벤치마크 케이스
+
+입춘 경계:
+
+2월 4일 16:28 vs 16:29 등, 분/초 차이로 월주 변화 확인.
+
+썸머타임 적용 연도 (예: 1988년 한국):
+
+tzid=Asia/Seoul 기준 DST 반영 여부 검증.
+
+서울 vs 부산:
+
+동일 시각, 다른 경도 → 진태양시 기준 시주 차이 확인.
+
+장소/생시 모름:
+
+lon, localWallTime 일부 누락 시 flags 처리와 오류 없는 응답 확인.
+
+8.2 성능 목표
+
+단건 /api/bazi 호출:
+
+평균 200ms 이내 (swisseph 캐시/ephe 파일 로컬일 때).
+
+Fallback 발생률:
+
+전체 호출의 0.1% 미만.
+
+9. Definition of Done (완료 기준)
+
+ swisseph-v2 또는 swisseph-wasm을 사용해, Windows Dev + Linux Prod에서 동일 코드로 동작.
+
+ /api/bazi에 대한 기본 벤치마크 케이스(입춘, DST, 서울/부산)가 기대값과 일치.
+
+ Dev DB에서 RLS 비활성 상태로 로그/결과가 잘 저장됨.
+
+ Prod 전환 시, RLS 정책은 별도 마이그레이션/PRD로 관리.
+
+ /bazi-test 페이지 또는 유사 테스트 UI에서 JSON 결과와 debug 정보를 시각 확인 가능.
+---
+
+# ✅ [감리 반영] Phase1 만세력 “숨겨진 지뢰 3종” 방지 스펙 (Patch v1.0)
+
+- 반영일: 2025-12-21
+- 적용 대상: 만세력 입력/계산/결과 페이지(게스트 포함) + 배포(AWS/Railway/Vercel)
+
+> 본 패치 섹션은 기존 PRD1 본문을 훼손하지 않는 **append-only** 규격입니다.  
+> 기존 본문과 충돌 시 **이 섹션을 우선** 적용합니다.
+
+---
+
+## 1) 예외 처리: “시간 모름(Unknown Time)” 정책 (강제)
+
+### 1.1 입력 규격(강제)
+- 사용자가 “시간 모름”을 체크하면:
+  - 클라이언트는 `birthTime`을 임의 값으로 채우지 않는다.
+  - 서버로는 `birthTime: null` 로 전송한다.
+  - 요청 페이로드에 `timeAccuracy`를 명시한다:
+    - `timeAccuracy: "exact" | "unknown"`
+
+예시(Request)
+```json
+{
+  "birthDate": "1990-01-01",
+  "birthTime": null,
+  "timeAccuracy": "unknown",
+  "timezone": "Asia/Seoul",
+  "location": {"lat": 37.456, "lng": 126.705}
+}
+```
+
+### 1.2 서버 계산 규칙(강제)
+- `timeAccuracy="unknown"` 이면:
+  - **시주(Hour Pillar)** 및 시주에 의존하는 파생값은 계산하지 않는다.
+  - 반환값은 다음 중 하나로 고정:
+    - `hourPillar: null` (권장)
+    - 또는 `hourPillar.status = "unknown"`
+- **절대 금지**: “그럼 00:00(자시)으로 계산” 같은 임의 보정
+
+예시(Response)
+```json
+{
+  "pillars": {
+    "year": {"stem": "...", "branch": "..."},
+    "month": {"stem": "...", "branch": "..."},
+    "day": {"stem": "...", "branch": "..."},
+    "hour": null
+  },
+  "timeAccuracy": "unknown"
+}
+```
+
+### 1.3 결과 UI 규칙(강제)
+- 결과 페이지에서 시주 영역은:
+  - `시간 모름` 또는 `미상(未詳)` 으로 명확히 표기
+- 시주 기반 기능(예: 시주 십신/12운성/신살 일부 등)이 존재한다면:
+  - 해당 영역에 `시간 미상으로 계산에서 제외` 배지/툴팁 노출
+
+---
+
+## 2) 게스트 데이터 휘발 방지: “새로고침(F5)에도 유지” (강제)
+
+> ⚠️ React state만 사용하면 100% 날아간다.  
+> 게스트 정책이 “브라우저 닫으면 사라짐”이어도, **새로고침은 사용자 실수로 자주 발생**하므로 방어해야 한다.
+
+### 2.1 저장 위치(강제 최소)
+- 게스트(로그인 전) 입력값/결과는 **sessionStorage**에 저장한다.
+  - 목표: **같은 탭에서 새로고침해도 결과 유지**
+  - 탭/브라우저를 닫으면 자연히 사라지는 성질을 이용(“임시” 정책과도 부합)
+
+### 2.2 저장 키/형식(권장)
+- `mansaeryeok:draft:v1` : 입력값 + createdAt
+- `mansaeryeok:result:v1` : 계산 결과 + createdAt
+
+예시
+```json
+{
+  "createdAt": "2025-12-21T12:00:00+09:00",
+  "payload": { "...": "..." }
+}
+```
+
+### 2.3 로딩/복구 규칙(강제)
+- 결과 페이지 진입 시:
+  1) sessionStorage에 `result`가 있으면 즉시 복구 렌더
+  2) 없으면 “임시 결과가 없습니다” 안내 + 입력 페이지로 이동 버튼
+- 결과 페이지 상단 고정 문구(기존 정책 유지):
+  - `지금은 임시 결과입니다. 브라우저를 닫으면 사라져요. [보관함에 영구 저장하기]`
+
+### 2.4 만료(선택)
+- 더 안전하게 하려면 `createdAt` 기준 1시간 TTL 적용 가능(선택)
+  - TTL 만료 시 sessionStorage 삭제 후 안내 페이지로
+
+> 기본값: **TTL 없음**, 대신 “탭 닫힘=삭제”로 단순 운영(초보자 운영 친화)
+
+---
+
+## 3) 배포 사고 방지: Ephemeris 파일 누락 방어 (강제)
+
+### 3.1 전제
+- `swisseph-wasm` 사용 시에도 Ephemeris 데이터 파일(`*.se1`)이 필요할 수 있다.
+- 로컬에서는 존재하지만 배포 빌드에서 누락되는 사고가 잦다.
+
+### 3.2 프로젝트 배치(강제)
+- Ephemeris 파일은 리포지토리에 포함하고, 경로를 고정한다:
+  - `public/ephe/` (권장)
+
+### 3.3 런타임 경로(강제)
+- 서버 런타임에서 파일 경로는 반드시 `process.cwd()` 기준으로 잡는다(상대경로 금지):
+  - 예: `path.join(process.cwd(), "public", "ephe")`
+
+### 3.4 CI/CD 검증(강제)
+- 빌드 단계에서 ephe 폴더 존재/파일 유무를 검사하고, 없으면 빌드를 실패시킨다.
+- 권장 스크립트:
+  - `node scripts/verify-ephe.js`
+- 권장 package.json:
+```json
+{
+  "scripts": {
+    "prebuild": "node scripts/verify-ephe.js",
+    "build": "next build"
+  }
+}
+```
+
+### 3.5 운영 체크리스트(필수)
+- Railway/AWS 배포 시:
+  - `public/ephe`가 이미지/아티팩트에 포함되는지 확인
+  - 컨테이너 빌드라면 Dockerfile에서 `COPY public/ephe ./public/ephe` 포함 확인
+
+---
+
+## 4) QA 시나리오(반드시 통과)
+1) 시간 모름 체크 → hourPillar가 null/unknown, UI에 “시간 모름” 표시, 임의 계산 금지
+2) 게스트가 결과 보고 F5 → 결과 유지(같은 탭)
+3) 배포 환경에서 ephe 폴더 누락 → 빌드 실패(운영 사고 전 차단)
+---
+
+# ✅ [추가 감리 반영] Phase1 만세력 “역사적 시간대/DST” 강제 스펙 (Patch v1.1)
+
+- 반영일: 2025-12-21
+- 목적: 1987~1988 DST(서머타임) 및 과거 표준시 변동 등 **역사적 타임존**을 반영하여 시주/절기 경계 계산 오류를 방지한다.
+- 적용 우선순위: 기존 본문/기존 패치와 충돌 시 **본 섹션 우선**
+
+---
+
+## 1) 금지 규칙(강제): Date 객체 직행 금지
+- 로컬(민간) 시간 입력을 `new Date("YYYY-MM-DD HH:mm")` 같은 방식으로 바로 처리하는 것을 금지한다.
+- 이유:
+  - 브라우저/서버 런타임의 해석 차이
+  - 과거 DST/표준시 변동의 누락/오해 가능성
+  - 결과적으로 **UTC 변환이 틀어져 시주가 바뀌는** 치명적 오류가 발생
+
+---
+
+## 2) 강제 규칙: Asia/Seoul “역사적 타임존” 기준으로 UTC 변환 후 엔진에 투입
+
+### 2.1 입력(강제)
+- 클라이언트는 항상 다음을 서버에 전달한다:
+  - `birthDate` (YYYY-MM-DD)
+  - `birthTime` (HH:mm 또는 null)
+  - `timezone` (고정값: "Asia/Seoul")
+  - `timeAccuracy` ("exact" | "unknown")
+
+### 2.2 서버 변환(강제)
+- 서버는 `timezone="Asia/Seoul"` 기준으로 **역사적 타임존을 반영해 UTC로 변환**한 뒤,
+- 그 UTC를 기반으로 Swiss Ephemeris(JD/UT)를 계산한다.
+
+### 2.3 구현 요구사항(강제)
+- 서버는 아래 중 1개 이상을 사용하여 변환을 수행한다:
+  - **luxon**
+  - **date-fns-tz**
+- 변환 시 반드시 IANA TZ("Asia/Seoul")을 사용해야 하며, “+09:00 고정 오프셋” 방식은 금지한다.
+
+> 참고: 한국은 과거에 DST(서머타임) 적용 및 표준시(UTC 오프셋) 변동 이력이 있으므로,  
+> ‘항상 +09:00’으로 고정하면 특정 연도/기간에서 오차가 날 수 있다.
+
+---
+
+## 3) QA 케이스(필수)
+- 1987~1988년 출생 케이스(DST 기간 포함)를 최소 3건 이상 테스트한다.
+- 테스트는 반드시 “Asia/Seoul → UTC 변환 결과가 기대와 일치하는지”부터 확인한다.
+
+(권장) 자동 테스트 시나리오:
+- 입력: 1988-07-01 10:00 Asia/Seoul
+- 기대: DST 반영 여부에 따라 UTC 변환이 올바른지 확인(환경별 tzdata/ICU 의존)
+
+---
+
+## 4) 운영 가이드(필수)
+- 배포 환경(Node.js)에서 **ICU/시간대 데이터가 충분히 포함되어야** 한다.
+- 컨테이너 기반 배포 시(특히 Alpine 등) tzdata 패키지 포함 여부를 확인한다.
+---
+
+# ✅ [추가 감리 반영] Phase1 만세력 “DST 전환 시각(존재하지 않음/모호함)” 방어 + 자동 검증 (Patch v1.2)
+
+- 반영일: 2025-12-21
+- 목적: 한국 DST(1987~1988) 전환 시각에서 발생하는 **존재하지 않는 시간(스프링 포워드)** / **모호한 시간(폴백)** 을 명세로 차단하고,
+  개발자가 런타임/배포 환경에서 실수하지 않도록 **자동 테스트 벡터**를 제공한다.
+
+근거(전환 시각):
+- 1987년 DST: 5/10 02:00 시작(KST→KDT), 10/11 03:00 종료(KDT→KST) citeturn0search0turn0search2turn0search4
+- 1988년 DST: 5/8 02:00 시작(KST→KDT), 10/9 03:00 종료(KDT→KST) citeturn0search1turn0search2turn0search5
+
+---
+
+## 1) “존재하지 않는 시간” 입력 방어(강제)
+
+### 1.1 정의
+DST 시작일의 02:00 → 03:00 점프 구간에는 **02:00~02:59**가 존재하지 않는다. citeturn0search2turn0search1
+
+### 1.2 강제 규칙
+- 사용자가 존재하지 않는 시간을 입력하면:
+  - 서버는 **422 Unprocessable Entity**로 거절한다.
+  - 에러 메시지(고정): `해당 날짜/시간은 서머타임 전환으로 존재하지 않습니다. 시간을 다시 선택해 주세요.`
+- **절대 금지**: “자동으로 03:xx로 보정” (사주가 바뀜)
+
+---
+
+## 2) “모호한 시간(두 번 존재)” 입력 방어(강제)
+
+### 2.1 정의
+DST 종료일에는 03:00 → 02:00으로 되돌아가며, **02:00~02:59**가 두 번 존재한다(모호한 시간). citeturn0search5turn0search4
+
+### 2.2 강제 규칙
+- 사용자가 모호한 시간을 입력하면:
+  - 시스템은 자동으로 하나를 선택하지 않는다.
+  - 아래 중 **하나의 정책을 PRD에서 고정**해야 한다(개발자가 임의 선택 금지):
+
+**정책 A(권장: 사용자 확인)**
+- UI에 “서머타임 적용 여부” 선택(토글)을 **해당 케이스에서만** 노출
+  - `dstPreference: "dst" | "standard"`
+- 서버는 선택값을 받아 UTC 변환을 확정한다.
+
+**정책 B(단순 운영: 표준시 우선)**
+- 모호한 시간은 기본적으로 “서머타임 종료 후(표준시)”로 해석한다.
+
+> 유료 만세력/사주 서비스는 정책 A가 안전하다. (분쟁 방지)
+
+---
+
+## 3) 자동 검증 벡터(필수 5종)
+
+> 목표: 런타임/배포 환경이 달라도 “DST 반영 여부”를 자동으로 잡아내기.
+> 이 벡터는 “Asia/Seoul 역사적 타임존”이 제대로 동작하는지 검증한다.
+
+### V1. DST 기간(1988) — KDT(UTC+10)
+- 입력: `1988-07-01 10:00 Asia/Seoul`
+- 기대: 오프셋 `UTC+10`, UTC `1988-07-01T00:00:00Z`
+
+### V2. DST 시작 직전(1988) — KST(UTC+9)
+- 입력: `1988-05-08 01:30 Asia/Seoul`
+- 기대: 오프셋 `UTC+9`, UTC `1988-05-07T16:30:00Z`
+
+### V3. DST 시작 “존재하지 않는 시간”(1988) — 거절
+- 입력: `1988-05-08 02:30 Asia/Seoul`
+- 기대: **422** + 고정 메시지(존재하지 않는 시간)
+
+### V4. DST 종료 “모호한 시간”(1988) — 사용자 선택 필요
+- 입력: `1988-10-09 02:30 Asia/Seoul`
+- 기대: **모호함 감지**
+  - 선택=dst(UTC+10) → UTC `1988-10-08T16:30:00Z`
+  - 선택=standard(UTC+9) → UTC `1988-10-08T17:30:00Z`
+
+### V5. DST 미사용 연도(1990) — KST(UTC+9)
+- 입력: `1990-01-01 10:00 Asia/Seoul`
+- 기대: 오프셋 `UTC+9`, UTC `1990-01-01T01:00:00Z`
+
+---
+
+## 4) 테스트 구현 지침(필수)
+- 최소 1개의 자동 테스트 파일을 포함한다.
+- luxon/date-fns-tz 사용 시:
+  - “존재하지 않는 시간”은 **입력값과 생성된 DateTime의 로컬 시각이 동일한지**로 검증한다(자동 보정 탐지).
+  - “모호한 시간”은 **UTC를 +1h 이동 후 다시 Asia/Seoul로 변환했을 때 로컬 시각이 동일한지**로 감지한다.
+
+---
+
+# 부록: 공통 운영 요구사항(배포 가능 기준)
+
+- 버전: v1.1
+- 최종 업데이트: 2025-12-21 (Asia/Seoul)
+- 상태: FINAL
+
+# ✅ 비기능 필수 요구사항 (Non-Functional Requirements) — Saju Service (v1.0)
+- 작성일: 2025-12-21
+- 목적: 기능 구현 외에 **“배포 가능한 상태(Production-Ready)”**를 만들기 위한 공통 요구사항 체크리스트
+- 적용 범위: PRD1(만세력) / PRD2(사주풀이) / PRD3(사주채팅) / /vault / 결제 / n8n 연동
+
+---
+
+## 개발자에게 전달할 “최종 점검용 프롬프트”(복붙)
+아래 내용을 그대로 개발자(에이전트)에게 전달하세요.
+
+> 서비스 출시를 위한 **비기능 필수 요구사항(Non-Functional Requirements)** 문서를 작성하고, 실제 코드에 반영해 주세요.  
+> 아래 항목은 **Common Requirements 문서 + Global Layout(app/layout.tsx) + 공통 컴포넌트(footer/header) + 인프라 설정**에 반드시 포함되어야 합니다.  
+> 각 항목은 “무엇을 / 어디에 / 어떻게” 구현할지까지 구체적으로 작성하고, 체크리스트 형태로 완료 여부를 표시할 수 있게 해 주세요.
+
+---
+
+## 1) Legal Pages (PG 심사 대비) — 필수
+### 1.1 Footer 링크
+- Footer에 다음 링크를 항상 노출:
+  - `/terms` 이용약관
+  - `/privacy` 개인정보처리방침
+
+### 1.2 정적 페이지 구현
+- Next.js App Router 기준:
+  - `app/terms/page.tsx`
+  - `app/privacy/page.tsx`
+- 내용은 **정적 텍스트 placeholder**로 먼저 구성(추후 실제 문구로 교체)
+- 페이지 하단에 “최종 수정일” 표기 영역 포함
+
+### 1.3 PG 심사에서 자주 보는 추가 노출(권장)
+- Footer 또는 `/terms` 내부에 다음 placeholder 영역 확보:
+  - 상호/대표/사업자등록번호/통신판매업신고번호
+  - 고객센터 연락처/이메일
+  - 환불/취소 규정 링크(예: `/refund`)
+> PG사/플랫폼에 따라 요구사항이 달라서, 최소한 “자리를 확보”해두는 게 안전합니다.
+
+---
+
+## 2) SEO & Open Graph (공유 최적화) — 필수
+### 2.1 Global Metadata
+- `app/layout.tsx`에서 global metadata 설정:
+  - `title`: "당신의 운명을 읽다, 000"
+  - `description`: "정통 만세력과 AI 사주풀이로 보는 나의 운세"
+  - `openGraph`:
+    - `title`, `description`
+    - `images`: `/og-default.png` (public)
+  - `twitter`: summary_large_image 설정(가능하면)
+
+### 2.2 OG 이미지 파일
+- `public/og-default.png` 파일 존재 보장
+- (권장) 페이지별 OG 커스터마이즈:
+  - 만세력 결과/리포트 결과 페이지는 “개인정보 포함 금지”  
+  - 즉, **공유용 OG는 기본값 고정**이 안전
+
+### 2.3 Robots/Index 정책(필수)
+- 민감 페이지(리포트/채팅/보관함)는 noindex 권장
+  - `/vault/**`, `/chat/**`, `/report/**` 등
+- `robots.txt` 또는 metadata에서 페이지별 제어
+
+---
+
+## 3) Error Monitoring (Sentry) — 필수
+### 3.1 Sentry SDK 연동 범위
+- Next.js에서 Client/Server 모두 수집되도록 설정
+  - 브라우저 에러 + 서버 에러 + API route 에러 + edge/서버리스 런타임 에러
+
+### 3.2 민감정보 마스킹(필수)
+- 다음 데이터는 Sentry 이벤트에서 마스킹/제외:
+  - 생년월일/출생시간/출생지(차트 input_json)
+  - 채팅 본문(content)
+  - 결제 식별정보 일부(전체 카드/PG 민감정보)
+- “사용자 식별”은 user_id 정도만(필요 시 해시)
+
+### 3.3 릴리즈 태그/환경 분리(필수)
+- env: `development` / `staging` / `production` 구분
+- release 버전(커밋 해시 또는 배포 버전) 태깅
+
+---
+
+## 4) Support Channel — 필수
+### 4.1 고객센터 노출
+- Footer에 고객센터 이메일을 mailto로 노출:
+  - `support@YOUR_DOMAIN`
+- (권장) 운영시간/응답 SLA 문구 placeholder
+
+### 4.2 피드백 위젯(선택)
+- Channel.io 또는 Tally 등:
+  - 스크립트 삽입 영역을 layout에 확보
+  - 환경변수로 on/off 가능(Feature Flag)
+
+---
+
+## 5) Security & Abuse 방어 — “배포 가능”의 핵심
+## 5.x 환경변수 템플릿(.env.example) — 필수(열쇠 꾸러미)
+### 5.x.1 .env.example 강제
+- 프로젝트 루트에 `.env.example` 파일을 **필수 포함**한다.
+- 실제 키 값은 비워두되, 필요한 모든 Key 명칭과 용도를 주석으로 명시한다.
+
+### 5.x.2 최소 포함 키 목록(예시)
+- Supabase
+  - `NEXT_PUBLIC_SUPABASE_URL=`
+  - `NEXT_PUBLIC_SUPABASE_ANON_KEY=`
+  - `SUPABASE_SERVICE_ROLE_KEY=`
+- n8n (Gateway → n8n)
+  - `N8N_WEBHOOK_URL=`
+  - `N8N_API_KEY=`
+- 결제(Toss 예시)
+  - `TOSS_SECRET_KEY=`
+  - `TOSS_CLIENT_KEY=`
+  - `TOSS_WEBHOOK_SECRET=`
+- Sentry
+  - `SENTRY_DSN=`
+- Swiss Ephemeris(wasm) / Ephemeris 파일 경로
+  - `SE_EPHE_PATH=public/ephe`
+- 운영
+  - `APP_BASE_URL=` (예: https://yourdomain.com)
+  - `SUPPORT_EMAIL=` (예: support@yourdomain.com)
+
+> 원칙: “키가 없으면 빌드/서버 부팅 단계에서 실패”하도록 체크를 둔다(배포 사고 방지).
+
+### 5.1 인증/권한 경계(필수)
+- 정책 고정:
+  - 클라이언트 → n8n 직결 금지
+  - Next.js Gateway에서만 n8n 호출
+  - 유료 섹션 필터링/tier 판정은 Next.js 서버가 진실
+
+### 5.2 Rate Limit / Bot 방어(필수)
+- 최소 적용 대상:
+  - `/api/mansaeryeok/calc`
+  - `/api/interpretation/report`
+  - `/api/chat/*` (상담)
+- 기준 예시:
+  - IP 기반 + 사용자 기반 혼합
+  - 1분당 N회, 초과 시 429
+- (권장) reCAPTCHA/Turnstile은 “결제/회원가입”에만 최소 적용
+
+### 5.3 Idempotency (필수)
+- 결제 후/리포트 생성/채팅 차감은 멱등 보장:
+  - chat_messages `(owner_id, idempotency_key)` unique
+  - credit_logs `(entitlement_id, reason, related_ref_id)` unique
+  - report 생성은 “Bound+exists=return” 동작
+
+---
+
+## 6) Observability / 운영 로그 — 필수
+### 6.1 서버 로그 표준(필수)
+- 모든 API 응답에 `request_id` 포함(로그에도 동일 값)
+- 필수 로그 필드:
+  - request_id, user_id(optional), route, status_code, latency_ms, error_code(optional)
+
+### 6.2 n8n 연동 로그(필수)
+- n8n 호출 시:
+  - workflow_name, run_id, cache_hit 여부, llm_called 여부, tokens_estimate(optional)
+
+---
+
+## 7) Data & Backups — 필수
+## 7.x 초기 데이터 시딩(Seeding) — 필수(운영 준비물)
+### 7.x.1 Seed Script 강제
+- DB 스키마 생성 후, 서비스 구동에 필요한 **필수 데이터(사주 해석 텍스트/로직 상수 등)**를 자동 적재하는 스크립트를 반드시 제공한다.
+- 실행 방식(고정):
+  - `npm run seed`
+- 원본 데이터:
+  - 제공된 CSV/TXT 파일(예: `@삼송사주_통합_정리본.csv`, `@1_8_통합자료.txt` 등)을 파싱하여 DB에 INSERT/UPSERT
+- 요구사항:
+  - **멱등성**: seed를 여러 번 실행해도 중복 적재/데이터 폭발이 발생하지 않도록 `logic_key` 기반 upsert를 보장한다.
+  - **검증**: 적재 후 레코드 수/필수 logic_key 존재 여부를 검사하고 실패 시 비정상 종료(exit 1)
+  - **대량 적재**: 1회 적재량이 커도 타임아웃/메모리 폭발 없이 배치 처리(Chunking)
+
+### 7.1 DB 백업 정책(필수)
+- Supabase/Postgres:
+  - 자동 백업 주기 확인 + 복구 절차 문서화
+- 최소 요구:
+  - “실수로 삭제/마이그레이션 사고” 시 복구 가능해야 함
+
+### 7.2 마이그레이션 원칙(필수)
+- production에서 수동 SQL 실행 금지(원칙)
+- migrations 파일로만 배포
+- 롤백 전략(최소):
+  - 이전 마이그레이션 스냅샷/태그 유지
+
+---
+
+## 8) Performance & Cost Control — 필수
+### 8.1 캐시/요약/예산 규칙 집행(필수)
+- 캐시 hit면 LLM 호출 0회
+- 컨텍스트 예산 초과 시:
+  - 원문 더 붙이지 않고 요약 대체
+- 요약 실패 3회 연속:
+  - text_only 모드 강제 + structured 요약은 프롬프트에서 제거(Null/'')
+
+### 8.2 이미지/정적 자산 최적화(권장)
+- OG 이미지/아이콘/폰트 용량 확인
+- (권장) next/image 사용
+
+---
+
+## 9) Accessibility & UX 안정성 — 권장(하지만 현실적으로 중요)
+- 기본 키보드 접근 가능
+- 폼 에러 메시지 명확(특히 생년월일/시간모름)
+- 네트워크 오류 시 재시도 UX 제공
+
+---
+
+## 10) Analytics / KPI — 권장(운영 필수)
+- GA4 또는 PostHog(선택)
+- 최소 이벤트:
+  - 만세력 계산 성공
+  - 회원가입
+  - 리포트 결제 진입/완료
+  - 리포트 생성 성공
+  - 상담 시작/차감 발생
+- 개인정보 포함 이벤트 금지(차트 input 값 그대로 보내지 말 것)
+
+---
+
+## 11) Release & Environment — 필수
+### 11.1 환경변수 체크(필수)
+- `.env.example` 제공
+- 누락 시 서버 부팅/빌드 실패하도록 체크(권장)
+
+### 11.2 Staging 환경(권장)
+- PG/결제는 테스트 모드 분리
+- Sentry도 staging 분리
+
+---
+
+## 12) “배포 가능” 최종 체크리스트(결론)
+- [ ] `/terms`, `/privacy` 존재 + Footer 링크 노출
+- [ ] Global metadata + `public/og-default.png` 존재
+- [ ] Sentry client/server 연동 + 민감정보 마스킹
+- [ ] support mailto 노출
+- [ ] Rate limit 적용(핵심 API)
+- [ ] Idempotency 제약(DB unique) 적용
+- [ ] DB 백업/복구 절차 문서화
+- [ ] 운영 로그(request_id) 표준 적용
+- [ ] n8n 캐시/요약/비상모드 규칙 집행 확인
+- [ ] `npm run seed` 제공 + seed 멱등/검증 포함
+- [ ] `.env.example` 제공(모든 키 명시, 값은 비움)
+
+# 부록: 최종 DB 스키마 매핑(Source of Truth)
+
+- 버전: v1.1
+- 최종 업데이트: 2025-12-21 (Asia/Seoul)
+- 상태: FINAL
+
+# 📂 [Final] Saju Service DB Schema Mapping (Source of Truth) — v1.1 (QA Patch)
+- 작성일: 2025-12-21
+- 목적: PRD1/2/3 + 기능명세서의 요구사항을 **DB 스키마/제약/인덱스 수준에서 강제**하기 위한 최종 매핑 문서
+- 원칙: 이 문서와 충돌하는 구현은 버그로 간주한다.
+
+---
+
+## 0. 먼저 결론(너 문서의 수정/보강 포인트)
+너가 작성한 방향(결제=권한=차트 1개 바인딩, Ledger)은 맞다.  
+다만 아래 5개가 빠지면 실제 운영에서 터진다(고객센터 폭주 레벨):
+
+1) **`chat_messages` 테이블이 없음** → 멱등 저장/차감 원자화가 구현 불가  
+2) **Entitlement↔Chart 1:1 강제 제약이 없음** → 하나의 차트를 여러 결제가 잡는 사고  
+3) **Credit Ledger 중복 차감 방지 유니크가 없음** → 재시도/타임아웃 시 -2, -3 차감  
+4) **리포트 스냅샷/재생성(Revision) 필드가 없음** → “업서트로 덮어쓰기” 사고 재발  
+5) **삭제 방지(LOCK A) DB 레벨 강제가 약함** → locked 차트 삭제 시도에서 깨진 상태 가능
+
+이 v1.1에서 위 5개를 “DB에서 못하게” 보강했다.
+
+---
+
+## 1. 핵심 정책 요약(강제)
+1. **1 Payment = 1 Entitlement**  
+2. **Entitlement ↔ Chart (1:1 바인딩)**  
+3. **Ledger System**: 상담 크레딧 충전/차감은 반드시 `credit_logs`에 기록  
+4. **Lock A**: 유료 리포트에 사용된(locked) 차트는 삭제 불가(숨김만)  
+5. **Lock B**: 리포트 생성은 멱등이며, Bound 상태에서 실패해도 “무료 복구” 가능  
+6. **Chat Gate**: 상담은 리포트(사주풀이) 이후에만 가능  
+7. **Deduct Rule**: assistant 메시지 저장 성공 1회 = 1차감(저장 실패는 0차감)
+
+---
+
+## 2. 테이블 상세 매핑
+
+### ① `saju_charts` (만세력/차트 데이터)
+> 역할: 만세력 계산 결과 저장소 (**회원 저장 O / 게스트 DB 저장 X**)
+
+**컬럼**
+- `id` (UUID, PK)
+- `owner_id` (UUID, NOT NULL) — **게스트 저장 X 정책이므로 NOT NULL이 안전**
+- `input_json` (JSONB, NOT NULL)
+- `result_json` (JSONB, NOT NULL) — 시간모름이면 시주 관련 필드는 null/unknown 유지
+- `is_locked` (Boolean, NOT NULL, Default false) — 유료 리포트 바인딩 시 true
+- `name` (Text, NULL) — 사용자가 붙인 이름 (예: “우리 남편”)
+- `is_hidden` (Boolean, NOT NULL, Default false) — **삭제 대신 숨김**
+- `created_at`, `updated_at` (Timestamptz)
+
+**제약/인덱스(필수)**
+- (권장) `UNIQUE (owner_id, name)` — 이름 중복 방지(선택)
+- `INDEX (owner_id, created_at DESC)`
+- `INDEX (owner_id, is_hidden, created_at DESC)`
+
+**삭제 정책(강제)**
+- 프론트에서 “삭제” 버튼은 locked 차트에 노출 금지
+- 서버는 삭제 요청 시:
+  - `is_locked=true`면 403/409로 거절 + 고정 메시지 “삭제 불가: 숨김 처리만 가능합니다.”
+- DB에서도 `interpretation_reports.chart_id` FK가 `RESTRICT`라 실삭제가 막힌다(아래 참고)
+
+---
+
+### ② `entitlements` (구매 권한/이용권)
+> 역할: “무엇을 할 수 있는가”를 정의하는 티켓(결제 1건=1개)
+
+**컬럼**
+- `id` (UUID, PK)
+- `owner_id` (UUID, NOT NULL)
+- `product_type` (Text, NOT NULL)
+  - `interpretation_only` | `interpretation_chat_pack` | `chat_addon`(추가상담)
+- `status` (Text, NOT NULL)
+  - `unbound` | `bound` | `refunded`(선택) | `canceled`(선택)
+- `bound_chart_id` (UUID, NULL, FK -> `saju_charts.id`)
+- `linked_payment_id` (Text, NOT NULL) — 주문번호/결제 트랜잭션 추적
+- `parent_entitlement_id` (UUID, NULL, FK -> entitlements.id) — **chat_addon이 어떤 base entitlement에 붙는지**
+- `created_at` (Timestamptz)
+
+**제약/인덱스(필수)**
+- **Entitlement↔Chart 1:1 강제**
+  - `UNIQUE (bound_chart_id) WHERE bound_chart_id IS NOT NULL`
+  - 의미: 한 차트는 단 하나의 entitlement에만 바인딩 가능(정책 2 강제)
+- `INDEX (owner_id, created_at DESC)`
+- `INDEX (linked_payment_id)`
+
+**비고**
+- “패키지(리포트+상담)”는 entitlement 1개로 충분하다.
+- “추가 상담”은 `chat_addon` entitlement를 만들고 `parent_entitlement_id`로 base에 묶는다.
+
+---
+
+### ③ `interpretation_reports` (사주풀이 결과)
+> 역할: 확정된 entitlement로 생성된 리포트 **스냅샷(불변)**
+
+**컬럼**
+- `id` (UUID, PK)
+- `entitlement_id` (UUID, NOT NULL, FK -> `entitlements.id`)
+- `chart_id` (UUID, NOT NULL, FK -> `saju_charts.id`)
+- `payload_json` (JSONB, NOT NULL) — **스냅샷**
+- `tier` (Text, NOT NULL) — `basic` | `premium`
+- `report_revision` (Int, NOT NULL, Default 1) — 재생성 시 +1
+- `engine_version` (Text, NOT NULL) — 알고리즘 버전 기록(예: “interp-v3.2”)
+- `is_current` (Boolean, NOT NULL, Default true) — 최신 리비전 표시
+- `created_at` (Timestamptz)
+
+**FK 옵션(LOCK A 핵심)**
+- `chart_id` FK는 반드시 **ON DELETE RESTRICT** (CASCADE 금지)
+
+**제약/인덱스(필수)**
+- `UNIQUE (entitlement_id, report_revision)`
+- `INDEX (chart_id)`
+- `INDEX (entitlement_id, is_current)`
+
+**스냅샷 불변성(강제)**
+- 기본 조회는 `is_current=true` 리포트 반환
+- 자동 업서트로 덮어쓰기 금지
+- 재생성은 “새 row 생성 + 이전 is_current=false”로 처리
+
+---
+
+### ④ `chat_sessions` (상담 채팅방)
+> 역할: 상담 대화의 컨텍스트 단위  
+> **중요:** 상담은 반드시 “리포트 기반”이어야 한다.
+
+**컬럼**
+- `id` (UUID, PK)
+- `owner_id` (UUID, NOT NULL)
+- `entitlement_id` (UUID, NOT NULL, FK -> entitlements.id)
+- `report_id` (UUID, NOT NULL, FK -> interpretation_reports.id) — **상담 anchor를 명시**
+- `summary_mode` (Text, NOT NULL) — `structured` | `text_only`
+- `session_summary_structured` (JSONB, NULL)
+- `session_summary_text` (Text, NULL)
+- `summary_fail_streak` (Int, NOT NULL, Default 0)
+- `created_at`, `updated_at` (Timestamptz)
+
+**인덱스(필수)**
+- `INDEX (owner_id, updated_at DESC)`
+- `INDEX (report_id)`
+
+---
+
+### ⑤ `chat_messages` (상담 메시지)
+> 역할: 멱등 저장/차감 원자화를 위한 **source of truth**
+
+**컬럼**
+- `id` (UUID, PK)
+- `session_id` (UUID, NOT NULL, FK -> chat_sessions.id)
+- `owner_id` (UUID, NOT NULL)
+- `role` (Text, NOT NULL) — `user` | `assistant` | `system`
+- `content` (Text, NOT NULL)
+- `idempotency_key` (Text, NOT NULL) — 클라이언트/게이트웨이가 생성
+- `created_at` (Timestamptz)
+
+**제약(필수)**
+- **유니크:** `UNIQUE (owner_id, idempotency_key)`
+
+**인덱스**
+- `INDEX (session_id, created_at ASC)`
+
+---
+
+### ⑥ `credit_logs` (상담 크레딧 장부 - Ledger) ★ 중요
+> 역할: 크레딧의 모든 충전/사용 이력
+
+**컬럼**
+- `id` (UUID, PK)
+- `owner_id` (UUID, NOT NULL)
+- `entitlement_id` (UUID, NOT NULL, FK -> entitlements.id)
+- `amount` (Int, NOT NULL) — +충전 / -차감
+- `reason` (Text, NOT NULL)
+  - `initial_pack` | `chat_deduct` | `addon_purchase` | `admin_adjust`(선택)
+- `related_ref_id` (Text, NOT NULL)
+  - 결제 ID 또는 `chat_messages.id`(assistant message id 권장)
+- `created_at` (Timestamptz)
+
+**중복 차감 방지(필수)**
+- `UNIQUE (entitlement_id, reason, related_ref_id)`
+
+**잔액 조회(규격)**
+- Source of truth:
+  - `SELECT COALESCE(SUM(amount),0) FROM credit_logs WHERE entitlement_id=?`
+- 성능 최적화(선택):
+  - `entitlements.cached_balance` + 트리거/정기 리빌드
+  - 단, cached_balance는 “캐시”일 뿐이며 분쟁 시 credit_logs 합이 진실
+
+---
+
+## 3. “권한 확정 처리”를 DB 관점에서 못 박기(필수)
+권한 확정 = **entitlements.bound_chart_id 기록 + saju_charts.is_locked=true**를 한 트랜잭션으로 처리.
+
+- 권장 RPC(개념):
+  - `confirm_entitlement_and_lock_chart(entitlement_id, chart_id, idempotency_key)`
+- 규칙:
+  - 이미 bound인데 같은 chart면 OK(멱등)
+  - 이미 bound인데 다른 chart면 409(불일치)
+
+---
+
+## 4. Lock B(리포트 생성 멱등) — DB가 도와줘야 하는 부분
+- bound + current report 존재 → 기존 반환
+- bound + report 없음 → 무료 생성 재시도
+- unbound → (bound+lock+create) 원자 트랜잭션
+
+권장:
+- `interpretation_reports` revision 모델 채택(업서트 금지)
+
+---
+
+## 5. 최소 권장 추가 테이블(선택)
+- `orders`/`payments` (환불/상태 동기화가 필요하면 필수로 승격)
+- `entitlement_events`(감사 로그)
+
+---
+
+## 6. 개발자 체크리스트(필수)
+- [ ] `chat_messages` 존재 + `UNIQUE(owner_id, idempotency_key)`
+- [ ] `credit_logs` `UNIQUE(entitlement_id, reason, related_ref_id)`
+- [ ] `entitlements` `UNIQUE(bound_chart_id) WHERE NOT NULL`
+- [ ] `interpretation_reports.chart_id` FK: **ON DELETE RESTRICT**
+- [ ] 리포트는 upsert 금지, revision row 생성
+- [ ] locked 차트 삭제 금지, 숨김만
+
+# 부록: Seed Data ETL 매핑 규격
+
+- 버전: v1.0
+- 최종 업데이트: 2025-12-21 (Asia/Seoul)
+- 상태: FINAL
+
+# 📂 [Final] Seed Data ETL Mapping Specification (v1.0)
+- 목적: 업로드된 Raw Data(CSV/TXT)를 서비스 DB에 **안전하게 적재(Seed)**하기 위한 “파싱/매핑 규격(레시피)”
+- 대상: `seed.ts`(또는 `scripts/seed.ts`)를 구현하는 개발자/에이전트
+- 핵심 원칙: **고민 없이 이 문서대로만 파싱하면 DB가 엉키지 않게 만든다.**
+
+---
+
+## 0) 초보자 버전 설명 (이사짐 센터 지시서)
+- CSV/TXT 파일 = 이삿짐 박스
+- DB 테이블 = 새집의 방/가구
+- 이 문서 = “박스 A는 거실 책장 1칸, 박스 B는 주방 서랍 3칸” 같은 **정리 규칙**
+
+> 결론: 개발자는 “어디에 무엇을 넣을지” 고민하지 말고, **파싱 코드만** 짜면 됩니다.
+
+---
+
+## 1) Target Schema (Seed 적재용 최소 테이블)
+> ⚠️ 지금 Phase에서는 “완벽한 의미 분류”보다 **안전한 적재 + 출처 추적**이 우선입니다.  
+> 따라서 1차 적재는 아래 두 테이블로 **원본을 안전하게 보관**하고,  
+> 그 다음 단계(2차 ETL/LLM 생성)에서 `INTERPRETATION_BASE` 같은 “정제 DB”를 만듭니다.
+
+### 1.1 `seed_documents` (문서 단위 보관: TXT/CSV 원문 출처)
+- 역할: “어느 파일의 어느 문서에서 왔는지” 추적 가능한 원문 보관소
+
+```sql
+CREATE TABLE seed_documents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  source_file TEXT NOT NULL,        -- 예: '@1_8_통합자료.txt'
+  source_doc_title TEXT,            -- 예: '1_황제내경.txt' (BEGIN/marker에서 추출)
+  source_doc_index INT NOT NULL,    -- 파일 내부 문서 순서(0..)
+  raw_text TEXT NOT NULL,           -- 문서 전체 원문(또는 큰 경우 chunk로 쪼개도 됨)
+  metadata JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+```
+
+### 1.2 `saju_contents` (검색/활용 단위: “섹션/청크”)
+- 역할: 앱/RAG/리포트 생성이 가져다 쓰기 좋은 단위로 잘라 저장
+
+```sql
+CREATE TABLE saju_contents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  category TEXT NOT NULL,            -- 내부 카테고리(아래 규칙)
+  logic_key TEXT NOT NULL,           -- 안정적인 키(아래 규칙)
+  title TEXT,                        -- 사용자에게 보일 제목(섹션 타이틀)
+  content_template TEXT NOT NULL,    -- 본문(줄바꿈 유지)
+  source_file TEXT NOT NULL,         -- 출처 파일명
+  source_ref JSONB DEFAULT '{}'::jsonb, -- doc_title, heading_path, index 등
+  metadata JSONB DEFAULT '{}'::jsonb,   -- tags, level, date, link 등
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 멱등(중복 방지) 핵심 유니크 키(강제)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_saju_contents_key
+  ON saju_contents(category, logic_key);
+```
+
+> ✅ 왜 2테이블인가?
+- `seed_documents`: “원본 통째로” 보관(나중에 오류/출처 추적 가능)
+- `saju_contents`: “실제로 쓰기 좋게” 조각낸 조리된 재료
+
+---
+
+## 2) Source Inventory (이번 프로젝트에 실제로 있는 파일 목록)
+| 파일 | 타입 | 규모 | 컬럼/특징 |
+|---|---:|---:|---|
+| `@삼송사주_통합_정리본.csv` | CSV | 472 rows | id, category, title, link, date_iso, content, source_file<br/>top category: {'기초': 331, '중급': 81, '60갑자': 60} |
+| `@어바웃사주.csv` | CSV | 31 rows | id, content, source_file<br/> |
+| `@해밝_클린_오프닝제거_통합.csv` | CSV | 1,442 rows | id, title, url, date_iso, category, content, source_file<br/>top category: {'해밝의 명리 공부': 1067, '투자 단상(斷想)': 112, '금융, 종목, 산업분석': 60} |
+| `@현묘_통합_클린_오프닝제거.csv` | CSV | 1,000 rows | id, source_file, title, detail_title, link, date_iso, content<br/> |
+| `@1_8_통합자료.txt` | TXT | 0.09 MB | doc markers: 8 |
+| `@고전통합_원문_명리5종+명리정종.txt` | TXT | 0.19 MB | doc markers: 6 |
+| `@선운_자료2개_통합원문.txt` | TXT | 0.45 MB | doc markers: 2 |
+| `@도화도르_원문_중복제거_통합원본.txt` | TXT | 3.46 MB | markers 없음(규칙/길이 기반 분할 필요) |
+| `@명리학 (기타사주 강의 모음).txt` | TXT | 0.62 MB | markers 없음(규칙/길이 기반 분할 필요) |
+| `@쵸코서당 초명 유튜브 정리.txt` | TXT | 1.83 MB | markers 없음(규칙/길이 기반 분할 필요) |
+
+---
+
+## 3) 공통 규칙 (모든 파일에 적용되는 기본 규칙)
+### 3.1 멱등성(Idempotency) — 무조건
+- seed를 10번 실행해도 데이터가 **중복 적재되면 실패**
+- 강제 규칙:
+  - `saju_contents`: `(category, logic_key)` 유니크 + UPSERT
+  - `seed_documents`: `(source_file, source_doc_index)` 유니크(권장)
+
+### 3.2 줄바꿈/따옴표 보존
+- `content_template`는 줄바꿈(\n)을 **그대로 유지**
+- CSV 내부 따옴표/쉼표가 깨지지 않도록:
+  - 파서: `papaparse` 또는 `csv-parse` 권장(혹은 pandas로 사전 점검)
+
+### 3.3 최소 품질 검증(Validation)
+- 아래 조건이면 **SKIP + 로그**:
+  - content가 비어있음 / 10자 미만
+  - id/logic_key가 비어있음
+- 적재 후 “필수 레코드 수” 최소치 확인:
+  - 예: 총 적재 N개 이상, 파일별 최소 M개 이상
+
+---
+
+## 4) Category/Logic Key 규격 (중요)
+### 4.1 category 내부 표준(현실적인 최소 세트)
+> Phase 1 seed의 목표는 “정교한 분류”가 아니라 **안전한 분류**입니다.
+
+- `general` : 일반 명리/통변/기초
+- `ganji` : 천간/지지/60갑자/일주
+- `ten_gods` : 십성/십신
+- `five_elements` : 오행(목화토금수)
+- `twelve_growth` : 십이운성
+- `year_fortune` : 연운/세운(예: 2026년 운세…)
+- `investment` : 투자/금융 관련
+- `health` : 황제내경/오행 건강
+- `rag_source` : 규칙적 매핑이 어려운 “자료창고”(향후 임베딩/RAG용)
+
+### 4.2 logic_key 생성 규칙(우선순위 고정)
+- **우선순위 1 (CSV)**: `id` 컬럼이 있으면 **logic_key = id**
+- **우선순위 2 (TXT 섹션)**:  
+  `logic_key = sha1(source_file + '|' + source_doc_title + '|' + heading_path + '|' + section_index).slice(0,16)`
+  - 이유: 제목/띄어쓰기 바뀌어도 키가 안정적이어야 함
+- **절대 금지**: title을 그대로 logic_key로 쓰기(변경/중복 위험)
+
+---
+
+## 5) 파일별 매핑 규칙 (Source → Target)
+
+## 5A) Type A: 정형 데이터 (CSV)
+### A-1) `@삼송사주_통합_정리본.csv`
+- 입력 컬럼: `id, category, title, link, date_iso, content, source_file`
+- 적재:
+  - `saju_contents.category` = CSV의 `category`를 그대로 저장하되,
+    - 내부 표준 category로 바꾸고 싶으면 `metadata.source_category`에 원본 저장 + `category_map` 적용(선택)
+  - `logic_key` = `id`
+  - `title` = `title`
+  - `content_template` = `content`
+  - `metadata.link` = `link`, `metadata.date_iso` = `date_iso`
+
+### A-2) `@해밝_클린_오프닝제거_통합.csv`
+- 입력 컬럼: `id, title, url, date_iso, category, content, source_file`
+- 적재:
+  - `logic_key` = `id`
+  - `metadata.link` = `url`
+  - 나머지는 A-1과 동일
+
+### A-3) `@현묘_통합_클린_오프닝제거.csv`
+- 입력 컬럼: `id, source_file, title, detail_title, link, date_iso, content`
+- 적재:
+  - `logic_key` = `id`
+  - `title` = `detail_title`가 있으면 그걸 우선, 없으면 `title`
+  - `category`는 컬럼이 없으므로 아래 규칙으로 자동 부여:
+    - title에 `년`, `운세`, `202`(연도) 포함 → `year_fortune`
+    - 그 외 → `general`
+
+### A-4) `@어바웃사주.csv`
+- 입력 컬럼: `id, content, source_file`
+- 적재:
+  - `logic_key` = `id`
+  - `title`은 없으므로 자동 생성:
+    - content의 첫 줄이 3~60자면 그걸 title로 사용
+    - 아니면 `AboutSaju_<built-in function id>`
+  - `category` 기본값: `general`
+
+---
+
+## 5B) Type B: 반정형 텍스트 (TXT) — “문서/섹션 분리”가 핵심
+> TXT는 “헤더 기준 분리”가 잘 되면 고급 자료가 되고,  
+> 분리가 안 되면 RAG용 창고(`rag_source`)로 넣는 게 안전합니다.
+
+### B-공통 1) 문서(doc) 분리 규칙(우선순위)
+1) `===== BEGIN ... =====` 라인이 있으면: 그 라인마다 **새 문서 시작**
+   - `source_doc_title` = BEGIN 라인 안의 파일명
+2) `BEGIN FILE:` 라인이 있으면: 그 라인마다 **새 문서 시작**
+   - `source_doc_title` = 뒤의 파일명
+3) 둘 다 없으면: 파일 전체를 **문서 1개**로 취급
+
+### B-공통 2) 섹션(section) 분리 규칙(우선순위)
+1) Markdown 헤더: `^#(1, 6)\s+`
+2) 로마숫자 헤더: `^(I|II|III|IV|V|VI|VII|VIII|IX|X)\.\s+`
+3) 숫자/서브숫자: `^\d+(\.\d+)*\.\s+`
+4) 위가 전혀 없으면: **길이 기반 청크**
+   - 목표 길이: 800~1,200자
+   - 분할 기준: 빈 줄(\n\n) 우선, 없으면 문장 마침표 기준
+
+### B-공통 3) title(섹션 제목) 추출
+- 헤더 줄 자체를 title로 사용하되, 꾸밈 제거:
+  - `#`, `##`, `###`, `**` 제거
+  - 앞의 번호(예: `1.1.`) 제거(선택)
+- 헤더가 없고 길이 청크면:
+  - 청크 첫 문장 40자 이내를 title로(없으면 `Chunk 0`)
+
+### B-공통 4) category 자동 분류(키워드 기반, 최소 안전 버전)
+> 여러 키워드가 동시에 나오면 “우선순위”로 1개만 선택(캐시/검색 꼬임 방지)
+
+우선순위(상위가 이김):
+1. `investment` : 투자, 금융, 종목, 매매
+2. `health` : 황제내경, 장부, 경락, 건강, 식이, 처방
+3. `twelve_growth` : 십이운성
+4. `ten_gods` : 십성, 십신
+5. `five_elements` : 오행, 목(木), 화(火), 토(土), 금(金), 수(水)
+6. `ganji` : 천간, 지지, 60갑자, 일주, 간지
+7. `general` : 그 외
+8. (분류 자신 없으면) `rag_source`
+
+---
+
+## 5C) Type C: 비정형/대용량 TXT — “RAG 창고”로 안전 적재
+적용 후보:
+- `@선운_자료2개_통합원문.txt`
+- `@도화도르_원문_중복제거_통합원본.txt`
+- `@명리학 (기타사주 강의 모음).txt`
+- `@쵸코서당 초명 유튜브 정리.txt`
+
+권장 전략:
+- 문서/섹션 분리가 70% 이상 성공하면 → `general/ganji/...`로 분류해서 `saju_contents` 적재
+- 아니면:
+  - `category = rag_source`
+  - `metadata.tags`에 파일명 기반 태그만 넣고,
+  - 나중에 임베딩 단계에서 사용
+
+---
+
+## 6) seed.ts 구현 요구사항 (개발자가 그대로 따라야 함)
+### 6.1 실행 커맨드(고정)
+- `npm run seed`
+
+### 6.2 처리 순서(고정)
+1) CSV 적재 → `saju_contents` UPSERT
+2) TXT 문서 분리 → `seed_documents` INSERT/UPSERT
+3) TXT 섹션 분리/청크 → `saju_contents` UPSERT
+4) 검증(레코드 수/필수 키 존재) → 실패 시 exit 1
+
+### 6.3 로깅(필수)
+- 파일별:
+  - 읽은 레코드 수 / 적재 성공 수 / 스킵 수 / 에러 수
+- 스킵 사유:
+  - empty content / invalid encoding / parse fail 등
+
+---
+
+## 7) 개발자에게 전달할 “최종 지시 문구”(복붙)
+> 제공된 CSV/TXT 파일을 DB에 seed로 적재해야 합니다.  
+> 이 문서(Seed Data ETL Mapping Spec)의 규칙대로 파싱/매핑하고, `npm run seed`로 실행 가능하게 만들어 주세요.  
+> 특히 TXT는 `BEGIN/===== BEGIN` 문서 분리 → 헤더 기준 섹션 분리 → 없으면 길이 기준 청크로 적재하세요.  
+> 적재는 반드시 멱등(Upsert)이어야 하고, `(category, logic_key)` 유니크를 지켜야 합니다.
+
+---
+
+## 부록 A) 추천: 코드에 박아둘 규칙 JSON (seed_mapping_rules_v1.json)
+- 장점: 개발자가 규칙을 코드에 하드코딩하다가 망가뜨리는 걸 방지
+
+```json
+{
+  "category_priority": [
+    "investment",
+    "health",
+    "twelve_growth",
+    "ten_gods",
+    "five_elements",
+    "ganji",
+    "general",
+    "rag_source"
+  ],
+  "keywords": {
+    "investment": [
+      "투자",
+      "금융",
+      "종목",
+      "매매",
+      "차트",
+      "리스크"
+    ],
+    "health": [
+      "황제내경",
+      "장부",
+      "경락",
+      "건강",
+      "식이",
+      "처방",
+      "치료"
+    ],
+    "twelve_growth": [
+      "십이운성",
+      "장생",
+      "목욕",
+      "관대",
+      "건록",
+      "제왕",
+      "쇠",
+      "병",
+      "사",
+      "묘",
+      "절",
+      "태",
+      "양"
+    ],
+    "ten_gods": [
+      "십성",
+      "십신",
+      "비견",
+      "겁재",
+      "식신",
+      "상관",
+      "편재",
+      "정재",
+      "편관",
+      "정관",
+      "편인",
+      "정인"
+    ],
+    "five_elements": [
+      "오행",
+      "목(",
+      "화(",
+      "토(",
+      "금(",
+      "수(",
+      "목(木)",
+      "화(火)",
+      "토(土)",
+      "금(金)",
+      "수(水)"
+    ],
+    "ganji": [
+      "천간",
+      "지지",
+      "60갑자",
+      "육십갑자",
+      "일주",
+      "간지"
+    ]
+  },
+  "txt_doc_markers": [
+    "^===== BEGIN .* =====$",
+    "^BEGIN FILE: .*"
+  ],
+  "txt_heading_patterns": [
+    "^#{1,6}\\s+",
+    "^(I|II|III|IV|V|VI|VII|VIII|IX|X)\\.\\s+",
+    "^\\d+(\\.\\d+)*\\.\\s+"
+  ],
+  "chunk_target_chars": [
+    800,
+    1200
+  ],
+  "logic_key_hash_len": 16
+}
+```

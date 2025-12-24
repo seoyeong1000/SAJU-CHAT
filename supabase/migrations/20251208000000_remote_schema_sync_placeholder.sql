@@ -1,0 +1,2 @@
+-- Placeholder migration to align with remote state (already applied on remote).
+-- No schema changes are executed here.

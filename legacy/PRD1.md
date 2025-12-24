@@ -41,12 +41,9 @@ OS 독립적으로 동작하도록 설계 (Windows Dev ↔ Linux Prod 동일 코
 
 만세력 엔진:
 
-1순위: swisseph-v2
- 
-packages.ecosyste.ms
-
-2순위(윈도우 빌드 실패 시): swisseph-wasm 
-packages.ecosyste.ms
+**swisseph-wasm** (WebAssembly 기반, OS 독립적)
+- swisseph-v2(네이티브 바인딩)는 Windows/Linux 간 빌드 의존성 문제로 제외
+- WASM 방식으로 Windows Dev ↔ Linux Prod 동일 코드 동작 보장
 
 보조 엔진(백업): date-chinese (단순 간지 계산용)
 
@@ -62,7 +59,7 @@ DB: Supabase(PostgreSQL)
 ❌ .exe 바이너리 업로드 후 child_process.exec로 호출
 → 리눅스 컨테이너/서버리스에서 깨질 가능성이 큼.
 
-✅ 반드시 NPM 패키지(swisseph-v2 / swisseph-wasm) 를 사용해 호출할 것.
+✅ 반드시 NPM 패키지(swisseph-wasm) 를 사용해 호출할 것.
 
 2. Cursor / Codex용 개발 지시문
 
@@ -79,14 +76,14 @@ Node.js 용 Swiss Ephemeris 라이브러리를 npm으로 설치해서 사용하�
 생각해보니 나중에 AWS나 Railway(리눅스 환경)에 배포해야 해서,
 `.exe` 파일을 직접 실행하는 방식은 관리가 어려울 것 같아.
 
-대신, Node.js용 Swiss Ephemeris 라이브러리(`swisseph-v2` 우선, 안되면 `swisseph-wasm`)를
+대신, Node.js용 Swiss Ephemeris 라이브러리(`swisseph-wasm`)를
 npm으로 설치해서 사용하는 방식으로 구현해줘.
 
-1. `package.json`에 `swisseph-v2`를 추가해줘.
-   - 만약 내 개발 PC(Windows)에서 native 빌드가 실패하면, 자동으로 `swisseph-wasm` 버전으로 대체해줘.
+1. `package.json`에 `swisseph-wasm`을 추가해줘.
+   - WASM 기반이라 Windows/Linux 모두 동일하게 동작함.
 
 2. `lib/bazi/engine.ts` 파일을 만들어서,
-   - `swisseph-v2` (또는 fallback으로 `swisseph-wasm`)를 import해서 사용하는 구조로 작성해줘.
+   - `swisseph-wasm`을 import해서 사용하는 구조로 작성해줘.
    - 절대로 `child_process`로 exe를 부르지 말고, 라이브러리 함수를 직접 호출하는 방식으로 만들어줘.
 
 3. Ephemeris 데이터 파일(ephe)은 프로젝트 내의 `public/ephe` 폴더에 둘 예정이야.
@@ -97,9 +94,9 @@ npm으로 설치해서 사용하는 방식으로 구현해줘.
 코드 수정 없이 동일하게 동작할 수 있게 해줘.
 
 2.3 Cursor에 줄 프롬프트 예시 ② (테스트 함수)
-`swisseph-v2`를 잘 설치했다면, 다음 작업을 해줘.
+`swisseph-wasm`을 잘 설치했다면, 다음 작업을 해줘.
 
-1. 터미널에서 `pnpm add swisseph-v2 date-chinese` 를 실행하는 스크립트/명령어를 README나 docs에 추가해줘.
+1. 터미널에서 `pnpm add swisseph-wasm date-chinese` 를 실행하는 스크립트/명령어를 README나 docs에 추가해줘.
 
 2. 설치가 끝났다고 가정하고,
    `lib/bazi/engine.ts` 안에 아래 내용을 포함한 테스트 함수를 만들어줘.
@@ -160,7 +157,7 @@ UTC로 들어오는 값이 아님. 변환은 서버에서 tzid를 사용해 처�
     "locationUnknown": false
   },
   "meta": {
-    "engine": "swiss-v2 | swisseph-wasm | date-chinese",
+    "engine": "swisseph-wasm | date-chinese",
     "note": "월지=태양황경(절기), 시주=진태양시(경도+EoT)",
     "debug": {
       "tzid": "Asia/Seoul",
@@ -234,7 +231,7 @@ modern
 5. 예외 처리 & Fallback 전략
 5.1 Swiss 엔진 실패 시
 
-swisseph-v2 로딩 실패, ephe 파일 누락, 계산 오류 등 발생 시:
+swisseph-wasm 로딩 실패, ephe 파일 누락, 계산 오류 등 발생 시:
 
 fallbackStrategy === "allowApprox"이면:
 
@@ -287,7 +284,7 @@ request_id (uuid, fk → astro_request.id)
 
 output_json (jsonb)
 
-engine_type (text) — 'swiss-v2' | 'swisseph-wasm' | 'date-chinese'
+engine_type (text) — 'swisseph-wasm' | 'date-chinese'
 
 created_at (timestamptz)
 
@@ -352,11 +349,8 @@ RLS: Dev 비활성, Prod 전환 시 clerk_id = auth.jwt()->>'sub'
 
 7. 설치 & 개발 가이드
 7.1 패키지 설치
-# Swiss Ephemeris & 보조 엔진
-pnpm add swisseph-v2 date-chinese
-
-# Windows에서 빌드가 실패하면 (node-gyp 에러 등)
-pnpm add swisseph-wasm
+# Swiss Ephemeris (WASM) & 보조 엔진
+pnpm add swisseph-wasm date-chinese
 
 7.2 Ephemeris 데이터 파일
 
@@ -368,10 +362,11 @@ sepl_18.se1, semo_18.se1, seas_18.se1, sefstars.se1 등
 
 초기화 코드 (예시):
 
-import swe from "swisseph-v2";
-// 또는 import swe from "swisseph-wasm";
+import SwissEph from "swisseph-wasm";
 
-swe.swe_set_ephe_path(process.cwd() + "/public/ephe");
+const swe = new SwissEph();
+await swe.initSwissEph();
+swe.set_ephe_path(process.cwd() + "/public/ephe");
 
 7.3 환경 변수 예시
 ENGINE_MODE=swiss          # swiss | date-chinese (fallback 엔진 선택)
@@ -412,7 +407,7 @@ Fallback 발생률:
 
 9. Definition of Done (완료 기준)
 
- swisseph-v2 또는 swisseph-wasm을 사용해, Windows Dev + Linux Prod에서 동일 코드로 동작.
+ swisseph-wasm을 사용해, Windows Dev + Linux Prod에서 동일 코드로 동작.
 
  /api/bazi에 대한 기본 벤치마크 케이스(입춘, DST, 서울/부산)가 기대값과 일치.
 
