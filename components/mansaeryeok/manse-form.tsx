@@ -49,6 +49,7 @@ import {
 // 폼 스키마
 const formSchema = z.object({
   name: z.string().min(1, '이름을 입력하세요').max(20, '이름은 20자 이내로 입력하세요'),
+  calendarType: z.enum(['solar', 'lunar', 'lunarLeap']).default('solar'),
   birthYear: z.string().min(4, '연도를 입력하세요'),
   birthMonth: z.string().min(1, '월을 선택하세요'),
   birthDay: z.string().min(1, '일을 선택하세요'),
@@ -58,6 +59,13 @@ const formSchema = z.object({
   gender: z.enum(['male', 'female']).optional(),
   birthCity: z.string().optional(),
 })
+
+// 달력 타입 옵션
+const CALENDAR_TYPES = [
+  { value: 'solar', label: '양력' },
+  { value: 'lunar', label: '음력' },
+  { value: 'lunarLeap', label: '음력(윤달)' },
+] as const
 
 type FormData = z.infer<typeof formSchema>
 
@@ -388,6 +396,7 @@ export function ManseForm() {
     resolver: zodResolver(formSchema),
     defaultValues: {
       name: '',
+      calendarType: 'solar',
       birthYear: '',
       birthMonth: '',
       birthDay: '',
@@ -444,6 +453,9 @@ export function ManseForm() {
         body: JSON.stringify({
           birthDate,
           birthTime,
+          calendarType: data.calendarType,
+          isLunar: data.calendarType !== 'solar',
+          isLeapMonth: data.calendarType === 'lunarLeap',
           timeAccuracy: data.timeUnknown ? 'unknown' : 'exact',
           gender: data.gender,
           jasiOption: data.jasiOption,
@@ -468,11 +480,14 @@ export function ManseForm() {
       }
 
       // 결과를 sessionStorage에 저장 (새로고침 방어)
+      const calendarTypeLabel = CALENDAR_TYPES.find(t => t.value === data.calendarType)?.label || '양력'
       const resultData = {
         input: {
           name: data.name,
           birthDate,
           birthTime,
+          calendarType: data.calendarType,
+          calendarTypeLabel,
           timeAccuracy: data.timeUnknown ? 'unknown' : 'exact',
           gender: data.gender,
           jasiOption: data.jasiOption,
@@ -501,15 +516,16 @@ export function ManseForm() {
           name="name"
           render={({ field }) => (
             <FormItem>
-              <FormLabel className="text-base font-medium">이름</FormLabel>
+              <FormLabel className="text-base font-medium text-stone-800">이름</FormLabel>
               <FormControl>
                 <Input
                   placeholder="홍길동"
                   maxLength={20}
+                  className="border-stone-200 focus:border-stone-400 focus:ring-stone-400"
                   {...field}
                 />
               </FormControl>
-              <FormDescription>
+              <FormDescription className="text-stone-500">
                 본인 또는 궁합을 볼 상대방의 이름을 입력하세요.
               </FormDescription>
               <FormMessage />
@@ -519,7 +535,37 @@ export function ManseForm() {
 
         {/* 생년월일 */}
         <div className="space-y-4">
-          <Label className="text-base font-medium">생년월일</Label>
+          <div className="flex items-center justify-between">
+            <Label className="text-base font-medium text-stone-800">생년월일</Label>
+
+            {/* 양력/음력 선택 */}
+            <FormField
+              control={form.control}
+              name="calendarType"
+              render={({ field }) => (
+                <FormItem className="flex items-center space-x-1">
+                  <FormControl>
+                    <div className="flex rounded-lg border border-stone-200 overflow-hidden">
+                      {CALENDAR_TYPES.map((type) => (
+                        <button
+                          key={type.value}
+                          type="button"
+                          onClick={() => field.onChange(type.value)}
+                          className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                            field.value === type.value
+                              ? 'bg-stone-800 text-white'
+                              : 'bg-white text-stone-600 hover:bg-stone-50'
+                          }`}
+                        >
+                          {type.label}
+                        </button>
+                      ))}
+                    </div>
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+          </div>
 
           <div className="grid grid-cols-3 gap-3">
             {/* 연도 */}
@@ -597,7 +643,7 @@ export function ManseForm() {
         {/* 출생시간 */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <Label className="text-base font-medium">출생시간</Label>
+            <Label className="text-base font-medium text-stone-800">출생시간</Label>
             <FormField
               control={form.control}
               name="timeUnknown"
@@ -609,7 +655,7 @@ export function ManseForm() {
                       onCheckedChange={field.onChange}
                     />
                   </FormControl>
-                  <Label className="text-sm text-muted-foreground cursor-pointer">
+                  <Label className="text-sm text-stone-500 cursor-pointer">
                     시간 모름
                   </Label>
                 </FormItem>
@@ -653,14 +699,14 @@ export function ManseForm() {
                 control={form.control}
                 name="jasiOption"
                 render={({ field }) => (
-                  <FormItem className="rounded-md border p-4 bg-muted/50">
+                  <FormItem className="rounded-xl border border-stone-200 p-4 bg-stone-50/50">
                     <div className="flex items-center justify-between mb-3">
-                      <FormLabel className="text-sm font-medium">자시(子時) 계산 방식</FormLabel>
+                      <FormLabel className="text-sm font-medium text-stone-800">자시(子時) 계산 방식</FormLabel>
                       <Button
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="h-6 px-2"
+                        className="h-6 px-2 text-stone-500 hover:text-stone-700 hover:bg-stone-100"
                         onClick={() => setShowJasiInfo(!showJasiInfo)}
                       >
                         <Info className="h-4 w-4 mr-1" />
@@ -669,17 +715,17 @@ export function ManseForm() {
                     </div>
 
                     {showJasiInfo && (
-                      <div className="mb-4 p-3 bg-background rounded-md text-sm space-y-2">
-                        <p className="font-medium">야자시 vs 조자시란?</p>
-                        <p className="text-muted-foreground">
+                      <div className="mb-4 p-3 bg-white rounded-lg border border-stone-100 text-sm space-y-2">
+                        <p className="font-medium text-stone-800">야자시 vs 조자시란?</p>
+                        <p className="text-stone-600">
                           자시(子時)는 밤 23:00부터 새벽 01:00까지의 시간입니다.
                           이 시간대에 태어난 경우, 날짜를 어떻게 계산할지에 따라 사주가 달라질 수 있습니다.
                         </p>
-                        <ul className="text-muted-foreground list-disc pl-4 space-y-1">
-                          <li><strong>야자시(夜子時)</strong>: 23:00~01:00를 전날로 계산 (전통 방식)</li>
-                          <li><strong>조자시(早子時)</strong>: 00:00를 기준으로 날짜 변경 (현대 방식)</li>
+                        <ul className="text-stone-600 list-disc pl-4 space-y-1">
+                          <li><strong className="text-stone-700">야자시(夜子時)</strong>: 23:00~01:00를 전날로 계산 (전통 방식)</li>
+                          <li><strong className="text-stone-700">조자시(早子時)</strong>: 00:00를 기준으로 날짜 변경 (현대 방식)</li>
                         </ul>
-                        <p className="text-muted-foreground text-xs mt-2">
+                        <p className="text-stone-500 text-xs mt-2">
                           ※ 학파에 따라 해석이 다르므로, 본인에게 맞는 방식을 선택하세요.
                         </p>
                       </div>
@@ -693,9 +739,9 @@ export function ManseForm() {
                             value="none"
                             checked={field.value === 'none'}
                             onChange={() => field.onChange('none')}
-                            className="h-4 w-4"
+                            className="h-4 w-4 accent-stone-700"
                           />
-                          <span className="text-sm">기본 (자동 계산)</span>
+                          <span className="text-sm text-stone-700">기본 (자동 계산)</span>
                         </label>
                         <label className="flex items-center space-x-3 cursor-pointer">
                           <input
@@ -703,9 +749,9 @@ export function ManseForm() {
                             value="yajasi"
                             checked={field.value === 'yajasi'}
                             onChange={() => field.onChange('yajasi')}
-                            className="h-4 w-4"
+                            className="h-4 w-4 accent-stone-700"
                           />
-                          <span className="text-sm">야자시(夜子時) - 23:00~01:00를 전날로 계산</span>
+                          <span className="text-sm text-stone-700">야자시(夜子時) - 23:00~01:00를 전날로 계산</span>
                         </label>
                         <label className="flex items-center space-x-3 cursor-pointer">
                           <input
@@ -713,9 +759,9 @@ export function ManseForm() {
                             value="jojasi"
                             checked={field.value === 'jojasi'}
                             onChange={() => field.onChange('jojasi')}
-                            className="h-4 w-4"
+                            className="h-4 w-4 accent-stone-700"
                           />
-                          <span className="text-sm">조자시(早子時) - 00:00 기준 날짜 변경</span>
+                          <span className="text-sm text-stone-700">조자시(早子時) - 00:00 기준 날짜 변경</span>
                         </label>
                       </div>
                     </FormControl>
@@ -726,7 +772,7 @@ export function ManseForm() {
           )}
 
           {timeUnknown && (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-stone-500 bg-stone-50 rounded-lg p-3">
               시간을 모르면 시주(時柱)가 계산되지 않습니다.
             </p>
           )}
@@ -734,8 +780,8 @@ export function ManseForm() {
           {/* 12간지 시간표 */}
           <Collapsible open={showSijinTable} onOpenChange={setShowSijinTable}>
             <CollapsibleTrigger asChild>
-              <Button variant="ghost" size="sm" className="w-full justify-between">
-                <span className="text-sm text-muted-foreground">12간지 시간표 보기</span>
+              <Button variant="ghost" size="sm" className="w-full justify-between hover:bg-stone-50">
+                <span className="text-sm text-stone-500">12간지 시간표 보기</span>
                 {showSijinTable ? (
                   <ChevronUp className="h-4 w-4" />
                 ) : (
@@ -744,25 +790,25 @@ export function ManseForm() {
               </Button>
             </CollapsibleTrigger>
             <CollapsibleContent className="mt-2">
-              <div className="rounded-md border overflow-hidden">
+              <div className="rounded-xl border border-stone-200 overflow-hidden">
                 <table className="w-full text-sm">
-                  <thead className="bg-muted">
+                  <thead className="bg-stone-50">
                     <tr>
-                      <th className="px-3 py-2 text-left font-medium">시진</th>
-                      <th className="px-3 py-2 text-left font-medium">한자</th>
-                      <th className="px-3 py-2 text-left font-medium">시간</th>
-                      <th className="px-3 py-2 text-left font-medium">오행</th>
-                      <th className="px-3 py-2 text-left font-medium">동물</th>
+                      <th className="px-3 py-2 text-left font-medium text-stone-700">시진</th>
+                      <th className="px-3 py-2 text-left font-medium text-stone-700">한자</th>
+                      <th className="px-3 py-2 text-left font-medium text-stone-700">시간</th>
+                      <th className="px-3 py-2 text-left font-medium text-stone-700">오행</th>
+                      <th className="px-3 py-2 text-left font-medium text-stone-700">동물</th>
                     </tr>
                   </thead>
                   <tbody>
                     {SIJIN_TABLE.map((row, idx) => (
-                      <tr key={row.name} className={idx % 2 === 0 ? 'bg-background' : 'bg-muted/30'}>
-                        <td className="px-3 py-2">{row.name}</td>
-                        <td className="px-3 py-2">{row.hanja}</td>
-                        <td className="px-3 py-2">{row.time}</td>
-                        <td className="px-3 py-2">{row.element}</td>
-                        <td className="px-3 py-2">{row.animal}</td>
+                      <tr key={row.name} className={idx % 2 === 0 ? 'bg-white' : 'bg-stone-50/50'}>
+                        <td className="px-3 py-2 text-stone-800">{row.name}</td>
+                        <td className="px-3 py-2 text-stone-600">{row.hanja}</td>
+                        <td className="px-3 py-2 text-stone-600">{row.time}</td>
+                        <td className="px-3 py-2 text-stone-600">{row.element}</td>
+                        <td className="px-3 py-2 text-stone-600">{row.animal}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -778,8 +824,8 @@ export function ManseForm() {
           name="gender"
           render={({ field }) => (
             <FormItem>
-              <FormLabel className="text-base font-medium">
-                성별 <span className="text-muted-foreground">(선택)</span>
+              <FormLabel className="text-base font-medium text-stone-800">
+                성별 <span className="text-stone-400">(선택)</span>
               </FormLabel>
               <Select onValueChange={field.onChange} value={field.value}>
                 <FormControl>
@@ -792,7 +838,7 @@ export function ManseForm() {
                   <SelectItem value="female">여성</SelectItem>
                 </SelectContent>
               </Select>
-              <FormDescription>
+              <FormDescription className="text-stone-500">
                 대운 계산에 사용됩니다.
               </FormDescription>
               <FormMessage />
@@ -806,8 +852,8 @@ export function ManseForm() {
           name="birthCity"
           render={({ field }) => (
             <FormItem className="flex flex-col">
-              <FormLabel className="text-base font-medium">
-                출생 도시 <span className="text-muted-foreground">(선택)</span>
+              <FormLabel className="text-base font-medium text-stone-800">
+                출생 도시 <span className="text-stone-400">(선택)</span>
               </FormLabel>
               <Popover open={cityOpen} onOpenChange={setCityOpen}>
                 <PopoverTrigger asChild>
@@ -861,10 +907,10 @@ export function ManseForm() {
                   </Command>
                 </PopoverContent>
               </Popover>
-              <FormDescription>
+              <FormDescription className="text-stone-500">
                 진태양시 계산에 사용됩니다. 미입력시 서울 기준으로 계산합니다.
               </FormDescription>
-              <p className="text-xs text-muted-foreground mt-1">
+              <p className="text-xs text-stone-400 mt-1">
                 태어난 도시를 모르시는 경우 &apos;서울특별시&apos; 혹은 태어난 국가의 수도를 입력해주세요.
               </p>
               <FormMessage />
@@ -874,20 +920,25 @@ export function ManseForm() {
 
         {/* 에러 메시지 */}
         {error && (
-          <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+          <div className="rounded-xl bg-red-50 border border-red-100 p-4 text-sm text-red-700">
             {error}
           </div>
         )}
 
         {/* 제출 버튼 */}
-        <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
+        <Button
+          type="submit"
+          className="w-full bg-stone-800 hover:bg-stone-900 text-white rounded-xl"
+          size="lg"
+          disabled={isLoading}
+        >
           {isLoading ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              계산 중...
+              사주를 읽고 있습니다...
             </>
           ) : (
-            '사주 보기'
+            '나의 사주 보기'
           )}
         </Button>
       </form>

@@ -1,8 +1,8 @@
 /**
- * 만세력 계산 API
- * POST /api/mansaeryeok/calc
+ * 사주 계산 + 해석 조회 API
+ * POST /api/saju/calculate
  *
- * 생년월일시를 입력받아 사주팔자를 계산합니다.
+ * 생년월일시를 입력받아 사주팔자를 계산하고 해석 데이터를 조회합니다.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -12,7 +12,7 @@ import type { ManseInput, TimeAccuracy } from '@/lib/manse'
 import { getDayPillarInterpretation, type InterpretationResult } from '@/lib/interpretation'
 
 // 요청 스키마
-const CalcRequestSchema = z.object({
+const CalculateRequestSchema = z.object({
   // 생년월일 (필수)
   birthDate: z
     .string()
@@ -34,6 +34,9 @@ const CalcRequestSchema = z.object({
   // 성별 (선택)
   gender: z.enum(['male', 'female']).optional(),
 
+  // 이름 (선택)
+  name: z.string().optional(),
+
   // 출생지 좌표 (선택)
   latitude: z.number().min(-90).max(90).optional(),
   longitude: z.number().min(-180).max(180).optional(),
@@ -42,43 +45,31 @@ const CalcRequestSchema = z.object({
   timezone: z.string().optional().default('Asia/Seoul'),
 })
 
-type CalcRequest = z.infer<typeof CalcRequestSchema>
-
 // 응답 타입
-interface CalcResponse {
+interface CalculateResponse {
   success: boolean
   data?: {
-    pillars: {
-      year: { stem: string; branch: string; full: string } | null
-      month: { stem: string; branch: string; full: string } | null
-      day: { stem: string; branch: string; full: string } | null
-      hour: { stem: string; branch: string; full: string } | null
+    // 입력 정보
+    name?: string
+    birthDate: string
+    birthTime: string | null
+    gender?: string
+    // 사주 정보
+    saju: {
+      year: string | null  // 년주 (예: "갑자")
+      month: string | null // 월주
+      day: string | null   // 일주
+      hour: string | null  // 시주
     }
+    // 일간 정보
     dayMaster: {
       hangul: string
       hanja: string
       element: string
       yinYang: string
     } | null
-    solarTerm: {
-      name: string
-      hanja: string
-      date: string
-    } | null
-    meta: {
-      engineVersion: string
-      calculatedAt: string
-      julianDay: number
-      sunLongitude: number
-      longitudeCorrection?: {
-        longitude: number
-        correctionMinutes: number
-        originalLocalTime: string
-        correctedSolarTime: string
-      }
-    }
-    analysis?: unknown
-    interpretation?: {
+    // 해석 데이터
+    interpretation: {
       title: string
       summary: string
       sections: {
@@ -88,6 +79,13 @@ interface CalcResponse {
         relationships: string | null
       }
     } | null
+    // 상세 분석 (선택)
+    analysis?: unknown
+    // 메타 정보
+    meta: {
+      engineVersion: string
+      calculatedAt: string
+    }
   }
   error?: {
     code: string
@@ -95,13 +93,13 @@ interface CalcResponse {
   }
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse<CalcResponse>> {
+export async function POST(request: NextRequest): Promise<NextResponse<CalculateResponse>> {
   try {
     // 1. 요청 파싱
     const body = await request.json()
 
     // 2. 유효성 검증
-    const parseResult = CalcRequestSchema.safeParse(body)
+    const parseResult = CalculateRequestSchema.safeParse(body)
 
     if (!parseResult.success) {
       return NextResponse.json(
@@ -119,7 +117,6 @@ export async function POST(request: NextRequest): Promise<NextResponse<CalcRespo
     const data = parseResult.data
 
     // 3. 시간 모름 처리
-    // timeAccuracy가 unknown이거나 birthTime이 없으면 시간 모름으로 처리
     const timeAccuracy: TimeAccuracy =
       data.timeAccuracy === 'unknown' || !data.birthTime ? 'unknown' : data.timeAccuracy
 
@@ -147,7 +144,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CalcRespo
         birthDate,
         {
           current: result.solarTerm.current,
-          next: null, // TODO: 다음 절기 정보 추가
+          next: null,
           prev: result.solarTerm.previous,
         }
       )
@@ -159,7 +156,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CalcRespo
       )
     }
 
-    // 6. 일주 해석 데이터 조회
+    // 6. 일주 해석 데이터 조회 (DB)
     let interpretation: InterpretationResult | null = null
     if (result.pillars.day.stemBranch) {
       try {
@@ -170,40 +167,23 @@ export async function POST(request: NextRequest): Promise<NextResponse<CalcRespo
       }
     }
 
-    // 6. 응답 포맷팅
-    const response = {
+    // 7. 응답 포맷팅
+    const response: CalculateResponse = {
       success: true,
       data: {
-        pillars: {
-          year: result.pillars.year.stemBranch
-            ? {
-                stem: result.pillars.year.stemBranch.stem.hangul,
-                branch: result.pillars.year.stemBranch.branch.hangul,
-                full: result.pillars.year.stemBranch.hangul,
-              }
-            : null,
-          month: result.pillars.month.stemBranch
-            ? {
-                stem: result.pillars.month.stemBranch.stem.hangul,
-                branch: result.pillars.month.stemBranch.branch.hangul,
-                full: result.pillars.month.stemBranch.hangul,
-              }
-            : null,
-          day: result.pillars.day.stemBranch
-            ? {
-                stem: result.pillars.day.stemBranch.stem.hangul,
-                branch: result.pillars.day.stemBranch.branch.hangul,
-                full: result.pillars.day.stemBranch.hangul,
-              }
-            : null,
-          hour: result.pillars.hour?.stemBranch
-            ? {
-                stem: result.pillars.hour.stemBranch.stem.hangul,
-                branch: result.pillars.hour.stemBranch.branch.hangul,
-                full: result.pillars.hour.stemBranch.hangul,
-              }
-            : null,
+        // 입력 정보
+        name: data.name,
+        birthDate: data.birthDate,
+        birthTime: data.birthTime || null,
+        gender: data.gender,
+        // 사주 정보 (간단 형식)
+        saju: {
+          year: result.pillars.year.stemBranch?.hangul || null,
+          month: result.pillars.month.stemBranch?.hangul || null,
+          day: result.pillars.day.stemBranch?.hangul || null,
+          hour: result.pillars.hour?.stemBranch?.hangul || null,
         },
+        // 일간 정보
         dayMaster: result.dayMaster
           ? {
               hangul: result.dayMaster.hangul,
@@ -212,25 +192,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CalcRespo
               yinYang: result.dayMaster.yinYang,
             }
           : null,
-        solarTerm: result.solarTerm.current
-          ? {
-              name: result.solarTerm.current.name,
-              hanja: result.solarTerm.current.hanja,
-              date: result.solarTerm.current.dateTimeUtc.toISOString(),
-            }
-          : null,
-        meta: {
-          engineVersion: result.meta.engineVersion,
-          calculatedAt: result.meta.calculatedAt,
-          julianDay: result.meta.julianDay,
-          sunLongitude: result.meta.sunLongitude,
-          ...(result.meta.longitudeCorrection && {
-            longitudeCorrection: result.meta.longitudeCorrection,
-          }),
-        },
-        // 분석 결과 추가
-        analysis: analysisData,
-        // 일주 해석 데이터
+        // 해석 데이터
         interpretation: interpretation
           ? {
               title: interpretation.title,
@@ -238,21 +200,27 @@ export async function POST(request: NextRequest): Promise<NextResponse<CalcRespo
               sections: interpretation.sections,
             }
           : null,
+        // 상세 분석
+        analysis: analysisData,
+        // 메타 정보
+        meta: {
+          engineVersion: result.meta.engineVersion,
+          calculatedAt: result.meta.calculatedAt,
+        },
       },
     }
 
     return NextResponse.json(response)
   } catch (error) {
-    // 에러 로깅 시 한글 문자열 깨짐 방지
+    // 에러 로깅
     const safeErrorLog = (err: unknown): string => {
       if (err instanceof Error) {
-        // ASCII 문자만 포함하도록 변환 (WASM panic 방지)
         return err.message.replace(/[^\x00-\x7F]/g, '?')
       }
       return String(err).replace(/[^\x00-\x7F]/g, '?')
     }
 
-    console.error('[API] /api/mansaeryeok/calc error:', safeErrorLog(error))
+    console.error('[API] /api/saju/calculate error:', safeErrorLog(error))
 
     // ManseError 처리
     if (error instanceof ManseError) {
@@ -268,7 +236,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<CalcRespo
       )
     }
 
-    // 일반 에러 - 사용자에게는 안전한 메시지 표시
+    // 일반 에러
     const isSwissEphError = error instanceof Error && error.message.includes('SwissEph')
 
     return NextResponse.json(
