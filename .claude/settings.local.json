@@ -10,7 +10,9 @@
       "Bash(taskkill:*)",
       "Bash(powershell -Command:*)",
       "WebFetch(domain:pro.forceteller.com)",
-      "Bash(pnpm dlx:*)"
+      "Bash(pnpm dlx:*)",
+      "Bash(pnpm add:*)",
+      "Bash(cat:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

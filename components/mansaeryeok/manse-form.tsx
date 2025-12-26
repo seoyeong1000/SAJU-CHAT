@@ -1,11 +1,14 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
+import { useUser } from '@clerk/nextjs'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Loader2, Search, ChevronDown, ChevronUp, MapPin, Info } from 'lucide-react'
+import { Loader2, Search, ChevronDown, ChevronUp, MapPin, Info, FolderOpen, Calendar, ArrowRight } from 'lucide-react'
+
+import { submitSajuForm } from '@/app/mansaeryeok/actions'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -45,6 +48,15 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet'
+import { Badge } from '@/components/ui/badge'
 
 // 폼 스키마
 const formSchema = z.object({
@@ -383,14 +395,59 @@ const CITIES = [
   { value: 'in-bangalore', label: '방갈로르', country: '인도', timezone: 'Asia/Kolkata', lat: 12.9716, lng: 77.5946 },
 ]
 
+// 저장된 만세력 타입
+interface SavedChart {
+  id: string
+  name: string
+  gender: string
+  birthDate: string
+  birthHour: string | null
+  dayPillar: string | null
+  createdAt: string
+}
+
 export function ManseForm() {
   const router = useRouter()
+  const { isSignedIn } = useUser()
+  const [isPending, startTransition] = useTransition()
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [cityOpen, setCityOpen] = useState(false)
   const [citySearch, setCitySearch] = useState('')
   const [showSijinTable, setShowSijinTable] = useState(false)
   const [showJasiInfo, setShowJasiInfo] = useState(false)
+
+  // 저장된 만세력 불러오기
+  const [savedCharts, setSavedCharts] = useState<SavedChart[]>([])
+  const [isLoadingSaved, setIsLoadingSaved] = useState(false)
+  const [sheetOpen, setSheetOpen] = useState(false)
+
+  // 저장된 만세력 목록 조회
+  const loadSavedCharts = async () => {
+    if (!isSignedIn) return
+
+    setIsLoadingSaved(true)
+    try {
+      const response = await fetch('/api/mansaeryeok/list')
+      const data = await response.json()
+
+      if (data.success) {
+        setSavedCharts(data.data)
+      }
+    } catch (err) {
+      console.error('Failed to load saved charts:', err)
+    } finally {
+      setIsLoadingSaved(false)
+    }
+  }
+
+  // Sheet 열릴 때 목록 조회
+  const handleSheetOpenChange = (open: boolean) => {
+    setSheetOpen(open)
+    if (open && savedCharts.length === 0) {
+      loadSavedCharts()
+    }
+  }
 
   const form = useForm<FormData>({
     resolver: zodResolver(formSchema),
@@ -436,73 +493,31 @@ export function ManseForm() {
     setError(null)
 
     try {
-      // 날짜/시간 포맷팅
-      const birthDate = `${data.birthYear}-${data.birthMonth}-${data.birthDay}`
-      const birthTime =
-        data.timeUnknown || !data.birthSijin
-          ? null
-          : data.birthSijin
+      // Server Action 사용 (로그인/비로그인 모두)
+      // - 로그인: DB 저장 후 /mansaeryeok/result?id=xxx 로 리다이렉트
+      // - 비로그인: /mansaeryeok/result?birthDate=...&gender=... 로 리다이렉트 (DB 저장 없음)
+      const formDataObj = new window.FormData()
+      formDataObj.append('name', data.name)
+      formDataObj.append('gender', data.gender || '')
+      formDataObj.append('birthYear', data.birthYear)
+      formDataObj.append('birthMonth', data.birthMonth)
+      formDataObj.append('birthDay', data.birthDay)
+      formDataObj.append('birthSijin', data.birthSijin || '')
+      formDataObj.append('calendarType', data.calendarType)
+      formDataObj.append('timeUnknown', String(data.timeUnknown))
+      formDataObj.append('birthCity', data.birthCity || '')
 
-      // 선택된 도시 정보 가져오기
-      const cityInfo = CITIES.find(c => c.value === data.birthCity)
-
-      // API 호출
-      const response = await fetch('/api/mansaeryeok/calc', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          birthDate,
-          birthTime,
-          calendarType: data.calendarType,
-          isLunar: data.calendarType !== 'solar',
-          isLeapMonth: data.calendarType === 'lunarLeap',
-          timeAccuracy: data.timeUnknown ? 'unknown' : 'exact',
-          gender: data.gender,
-          jasiOption: data.jasiOption,
-          // 경도 보정을 위해 직접 전달
-          latitude: cityInfo?.lat,
-          longitude: cityInfo?.lng,
-          timezone: cityInfo?.timezone || 'Asia/Seoul',
-          city: cityInfo ? {
-            name: cityInfo.label,
-            country: cityInfo.country,
-            timezone: cityInfo.timezone,
-            lat: cityInfo.lat,
-            lng: cityInfo.lng,
-          } : null,
-        }),
+      startTransition(async () => {
+        try {
+          await submitSajuForm(formDataObj)
+          // redirect는 Server Action 내부에서 처리됨
+        } catch (err) {
+          setError(err instanceof Error ? err.message : '오류가 발생했습니다')
+          setIsLoading(false)
+        }
       })
-
-      const result = await response.json()
-
-      if (!result.success) {
-        throw new Error(result.error?.message || '계산에 실패했습니다')
-      }
-
-      // 결과를 sessionStorage에 저장 (새로고침 방어)
-      const calendarTypeLabel = CALENDAR_TYPES.find(t => t.value === data.calendarType)?.label || '양력'
-      const resultData = {
-        input: {
-          name: data.name,
-          birthDate,
-          birthTime,
-          calendarType: data.calendarType,
-          calendarTypeLabel,
-          timeAccuracy: data.timeUnknown ? 'unknown' : 'exact',
-          gender: data.gender,
-          jasiOption: data.jasiOption,
-          city: cityInfo ? `${cityInfo.label}, ${cityInfo.country}` : null,
-        },
-        result: result.data,
-        savedAt: new Date().toISOString(),
-      }
-      sessionStorage.setItem('manse_result', JSON.stringify(resultData))
-
-      // 결과 페이지로 이동
-      router.push('/mansaeryeok/result')
     } catch (err) {
       setError(err instanceof Error ? err.message : '오류가 발생했습니다')
-    } finally {
       setIsLoading(false)
     }
   }
@@ -930,17 +945,115 @@ export function ManseForm() {
           type="submit"
           className="w-full bg-stone-800 hover:bg-stone-900 text-white rounded-xl"
           size="lg"
-          disabled={isLoading}
+          disabled={isLoading || isPending}
         >
-          {isLoading ? (
+          {isLoading || isPending ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              사주를 읽고 있습니다...
+              {isPending ? '저장하는 중...' : '사주를 읽고 있습니다...'}
             </>
           ) : (
-            '나의 사주 보기'
+            '만세력 보러가기'
           )}
         </Button>
+
+        {/* 저장된 만세력 불러오기 */}
+        <Sheet open={sheetOpen} onOpenChange={handleSheetOpenChange}>
+          <SheetTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full rounded-xl border-stone-300 text-stone-700 hover:bg-stone-50"
+              size="lg"
+            >
+              <FolderOpen className="mr-2 h-4 w-4" />
+              저장된 만세력 불러오기
+            </Button>
+          </SheetTrigger>
+          <SheetContent side="bottom" className="h-[70vh] rounded-t-2xl">
+            <SheetHeader className="pb-4 border-b">
+              <SheetTitle className="text-lg">저장된 만세력</SheetTitle>
+              <SheetDescription>
+                이전에 저장한 만세력을 선택하면 결과 페이지로 이동합니다.
+              </SheetDescription>
+            </SheetHeader>
+
+            <div className="py-4 overflow-y-auto h-[calc(100%-100px)]">
+              {!isSignedIn ? (
+                <div className="flex flex-col items-center justify-center h-full text-center px-4">
+                  <FolderOpen className="h-12 w-12 text-stone-300 mb-4" />
+                  <p className="text-stone-600 font-medium mb-2">로그인이 필요합니다</p>
+                  <p className="text-sm text-stone-500 mb-4">
+                    로그인하면 저장한 만세력을 불러올 수 있습니다.
+                  </p>
+                  <Button
+                    onClick={() => {
+                      setSheetOpen(false)
+                      router.push('/sign-in?redirect_url=/mansaeryeok')
+                    }}
+                    className="rounded-xl"
+                  >
+                    로그인하기
+                  </Button>
+                </div>
+              ) : isLoadingSaved ? (
+                <div className="flex items-center justify-center h-full">
+                  <Loader2 className="h-8 w-8 animate-spin text-stone-400" />
+                </div>
+              ) : savedCharts.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-center px-4">
+                  <FolderOpen className="h-12 w-12 text-stone-300 mb-4" />
+                  <p className="text-stone-600 font-medium mb-2">저장된 만세력이 없습니다</p>
+                  <p className="text-sm text-stone-500">
+                    만세력을 조회한 후 저장하면 여기에서 불러올 수 있습니다.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {savedCharts.map((chart) => (
+                    <button
+                      key={chart.id}
+                      type="button"
+                      onClick={() => {
+                        setSheetOpen(false)
+                        router.push(`/mansaeryeok/result?id=${chart.id}`)
+                      }}
+                      className="w-full p-4 rounded-xl border border-stone-200 hover:border-stone-300 hover:bg-stone-50 transition-colors text-left"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="flex flex-col">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-stone-800">{chart.name}</span>
+                              {chart.dayPillar && (
+                                <Badge variant="secondary" className="text-xs bg-purple-100 text-purple-700">
+                                  {chart.dayPillar}일주
+                                </Badge>
+                              )}
+                              <Badge variant="outline" className="text-xs">
+                                {chart.gender === 'male' ? '남' : '여'}
+                              </Badge>
+                            </div>
+                            <div className="flex items-center gap-2 mt-1 text-sm text-stone-500">
+                              <Calendar className="h-3.5 w-3.5" />
+                              <span>
+                                {chart.birthDate
+                                  ? new Date(chart.birthDate).toLocaleDateString('ko-KR')
+                                  : '생년월일 정보 없음'}
+                              </span>
+                              {chart.birthHour && <span>· {chart.birthHour}</span>}
+                            </div>
+                          </div>
+                        </div>
+                        <ArrowRight className="h-4 w-4 text-stone-400" />
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </SheetContent>
+        </Sheet>
       </form>
     </Form>
   )
