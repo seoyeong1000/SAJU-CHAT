@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState, useTransition } from "react";
+import React, { useState, useTransition, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import html2canvas from "html2canvas";
 import { useUser } from "@clerk/nextjs";
-import { Sparkles, TrendingUp, Share2, Music, ExternalLink, Shield, Zap, Target, Save, Printer } from "lucide-react";
+import { Sparkles, TrendingUp, Share2, Music, ExternalLink, Shield, Zap, Target, Save, Printer, Download } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -314,6 +315,8 @@ export default function ResultDashboard({ chartData, isSaved = true }: ResultDas
     isSaved ? "saved" : "idle"
   );
   const [isPending, startTransition] = useTransition();
+  const [isCapturing, setIsCapturing] = useState(false);
+  const captureRef = useRef<HTMLDivElement>(null);
 
   const result = parseResultJson(chartData.result_json);
   const ganji = getGanjiData(result);
@@ -406,9 +409,44 @@ export default function ResultDashboard({ chartData, isSaved = true }: ResultDas
     }
   };
 
+  // 이미지로 저장 기능
+  const handleSaveImage = async () => {
+    if (!captureRef.current || isCapturing) return;
+
+    setIsCapturing(true);
+
+    try {
+      const canvas = await html2canvas(captureRef.current, {
+        backgroundColor: "#ffffff",
+        scale: 2, // 고해상도
+        useCORS: true,
+        logging: false,
+        windowWidth: captureRef.current.scrollWidth,
+        windowHeight: captureRef.current.scrollHeight,
+      });
+
+      // 캔버스를 이미지로 변환
+      const dataUrl = canvas.toDataURL("image/png");
+
+      // 다운로드 링크 생성
+      const link = document.createElement("a");
+      link.download = `${userName}_사주분석_${new Date().toLocaleDateString("ko-KR").replace(/\./g, "").replace(/ /g, "")}.png`;
+      link.href = dataUrl;
+      link.click();
+    } catch (error) {
+      console.error("이미지 저장 실패:", error);
+      alert("이미지 저장 중 오류가 발생했습니다.");
+    } finally {
+      setIsCapturing(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-white text-slate-900 font-sans pb-8">
       <div className="max-w-2xl mx-auto px-4 pt-6">
+
+        {/* ========== 캡처 영역 시작 ========== */}
+        <div ref={captureRef} className="bg-white">
 
         {/* ========== 상단 헤더 ========== */}
         {(() => {
@@ -791,7 +829,7 @@ export default function ResultDashboard({ chartData, isSaved = true }: ResultDas
           </CardContent>
         </Card>
 
-        {/* ========== 분석 엔진 소개 카드 ========== */}
+        {/* ========== 정통 명리 해석 카드 ========== */}
         <Card className="mb-6 border-slate-200 bg-gradient-to-br from-slate-50 to-slate-100/50 overflow-hidden">
           <CardContent className="p-5">
             <div className="flex items-start gap-4">
@@ -800,20 +838,20 @@ export default function ResultDashboard({ chartData, isSaved = true }: ResultDas
               </div>
               <div className="flex-1">
                 <h3 className="text-base font-bold text-slate-800 mb-1">
-                  명리 심층 해석 엔진
+                  정통 명리학 기반 해석
                 </h3>
                 <p className="text-xs text-slate-600 leading-relaxed mb-3">
-                  적천수(滴天髓), 궁통보감(窮通寶鑑), 자평진전(子平眞詮) 등 <span className="font-medium text-indigo-700">고전 명리 원전</span>부터
-                  현대 통계 기반 해석까지 <span className="font-medium text-indigo-700">10만+ 케이스</span>를 학습한 전문 분석 시스템입니다.
+                  적천수(滴天髓), 궁통보감(窮通寶鑑), 자평진전(子平眞詮) 등 <span className="font-medium text-indigo-700">고전 명리 원전</span>과
+                  현대 명리학 연구를 바탕으로 <span className="font-medium text-indigo-700">정확하고 깊이 있는</span> 사주 해석을 제공합니다.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   <span className="inline-flex items-center px-2 py-1 bg-white rounded-full text-[10px] text-slate-600 border border-slate-200">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5"></span>
-                    고전 원전 DB
+                    고전 원전 기반
                   </span>
                   <span className="inline-flex items-center px-2 py-1 bg-white rounded-full text-[10px] text-slate-600 border border-slate-200">
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1.5"></span>
-                    현대 통계 분석
+                    전문가 검증
                   </span>
                   <span className="inline-flex items-center px-2 py-1 bg-white rounded-full text-[10px] text-slate-600 border border-slate-200">
                     <span className="w-1.5 h-1.5 rounded-full bg-purple-500 mr-1.5"></span>
@@ -825,12 +863,18 @@ export default function ResultDashboard({ chartData, isSaved = true }: ResultDas
           </CardContent>
         </Card>
 
-        {/* ========== 심층 해석 / 저장 버튼 ========== */}
+        </div>
+        {/* ========== 캡처 영역 끝 ========== */}
+
+        {/* ========== 사주상담 / 저장 버튼 ========== */}
         <div className="space-y-3 mb-6">
-          <Link href="/chat" className="block">
+          <Link
+            href={chartData.id ? `/chat?chart_id=${chartData.id}` : "/chat"}
+            className="block"
+          >
             <Button className="w-full h-14 text-lg font-bold bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 hover:from-indigo-700 hover:via-purple-700 hover:to-indigo-800 text-white rounded-2xl shadow-lg shadow-indigo-500/25">
               <Zap className="w-5 h-5 mr-2" />
-              심층 해석 시작하기
+              맞춤 사주상담 시작하기
             </Button>
           </Link>
           <p className="text-center text-[11px] text-slate-500">
@@ -869,23 +913,34 @@ export default function ResultDashboard({ chartData, isSaved = true }: ResultDas
         </div>
 
         {/* ========== 공유 / 인쇄 버튼 ========== */}
-        <div className="flex gap-3 mb-8">
-          <Button
-            onClick={handleShare}
-            variant="outline"
-            className="flex-1 h-12 border-slate-300 text-slate-600 hover:bg-slate-50 rounded-xl"
-          >
-            <Share2 className="w-4 h-4 mr-2" />
-            친구에게 공유
-          </Button>
-          <Button
-            variant="outline"
-            className="flex-1 h-12 border-slate-300 text-slate-600 hover:bg-slate-50 rounded-xl"
-            onClick={() => window.print()}
-          >
-            <Printer className="w-4 h-4 mr-2" />
-            인쇄/저장
-          </Button>
+        <div className="space-y-3 mb-8">
+          <div className="flex gap-3">
+            <Button
+              onClick={handleShare}
+              variant="outline"
+              className="flex-1 h-12 border-slate-300 text-slate-600 hover:bg-slate-50 rounded-xl"
+            >
+              <Share2 className="w-4 h-4 mr-2" />
+              링크 공유
+            </Button>
+            <Button
+              onClick={handleSaveImage}
+              disabled={isCapturing}
+              variant="outline"
+              className="flex-1 h-12 border-slate-300 text-slate-600 hover:bg-slate-50 rounded-xl"
+            >
+              <Download className="w-4 h-4 mr-2" />
+              {isCapturing ? "저장 중..." : "이미지 저장"}
+            </Button>
+            <Button
+              variant="outline"
+              className="flex-1 h-12 border-slate-300 text-slate-600 hover:bg-slate-50 rounded-xl"
+              onClick={() => window.print()}
+            >
+              <Printer className="w-4 h-4 mr-2" />
+              인쇄
+            </Button>
+          </div>
         </div>
 
         {/* ========== 오행 밸런싱 사운드 (맨 하단) ========== */}

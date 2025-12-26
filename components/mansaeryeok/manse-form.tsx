@@ -505,6 +505,7 @@ export function ManseForm() {
       formDataObj.append('birthSijin', data.birthSijin || '')
       formDataObj.append('calendarType', data.calendarType)
       formDataObj.append('timeUnknown', String(data.timeUnknown))
+      formDataObj.append('jasiOption', data.jasiOption || 'none')
       formDataObj.append('birthCity', data.birthCity || '')
 
       startTransition(async () => {

@@ -24,6 +24,7 @@ export async function submitSajuForm(formData: FormData) {
   const birthSijin = formData.get("birthSijin") as string | null;
   const calendarType = formData.get("calendarType") as string;
   const timeUnknown = formData.get("timeUnknown") === "true";
+  const jasiOption = formData.get("jasiOption") as string | null; // 'none' | 'yajasi' | 'jojasi'
   const birthCity = formData.get("birthCity") as string | null;
 
   // 3. 날짜 포맷팅
@@ -45,6 +46,7 @@ export async function submitSajuForm(formData: FormData) {
     if (birthHour) params.set("birthTime", birthHour);
     if (calendarType) params.set("calendarType", calendarType);
     if (timeUnknown) params.set("timeUnknown", "true");
+    if (jasiOption && jasiOption !== "none") params.set("jasiOption", jasiOption);
     if (birthCity) params.set("city", birthCity);
     if (name) params.set("name", name);
 
@@ -61,6 +63,7 @@ export async function submitSajuForm(formData: FormData) {
     birthTime: birthSijin,
     calendarType,
     timeAccuracy: timeUnknown ? "unknown" : "exact",
+    jasiOption: jasiOption || "none", // 야자시/조자시 옵션
     gender,
     city: birthCity,
   };
